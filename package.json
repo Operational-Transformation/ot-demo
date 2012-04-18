@@ -1,0 +1,27 @@
+{
+  "name": "operational-transformation-demo",
+  "description": "Demo for operational-transformation package",
+  "keywords": [
+    "operational transformation",
+    "ot"
+  ],
+  "version": "0.0.4",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/timjb/javascript-operational-transformation-demo"
+  },
+  "bugs": {
+    "url": "https://github.com/timjb/javascript-operational-transformation-demo/issues"
+  },
+  "dependencies": {
+    "operational-transformation": "0.0.4",
+    "express": "2.5.8",
+    "socket.io": "0.9.2"
+  },
+  "licenses": [
+    {
+      "type": "MIT",
+      "url": "https://github.com/github.com/timjb/javascript-operational-transformation-demo/raw/master/LICENSE"
+    }
+  ]
+}
