@@ -24,14 +24,16 @@
   socket.once('doc', function (obj) {
     var str = obj.str, revision = obj.revision, users = obj.users;
 
-    var wrapper = document.getElementById('wrapper');
-    var cm = window.cm = CodeMirror(wrapper, {
+    var editorWrapper = document.getElementById('editor-wrapper');
+    var cm = window.cm = CodeMirror(editorWrapper, {
       lineNumbers: true,
       lineWrapping: true,
       mode: 'markdown',
       value: str
     });
 
-    var cmClient = new CodeMirrorClient(revision, cm, socket, name, users);
+    var userListWrapper = document.getElementById('userlist-wrapper');
+    var cmClient = window.cmClient = new CodeMirrorClient(revision, cm, socket, name, users);
+    userListWrapper.appendChild(cmClient.userListEl);
   });
 })();
