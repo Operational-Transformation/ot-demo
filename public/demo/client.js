@@ -9,6 +9,7 @@
     var queue = [];
     socket.emit = function () {
       queue.push(arguments);
+      return socket;
     };
     setInterval(function () {
       if (queue.length) {
@@ -25,7 +26,6 @@
 
   function disable (el) {
     if (!disabledRegex.test(el.className)) {
-      console.log(el.className);
       el.className += ' disabled';
     }
   }
