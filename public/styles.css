@@ -2,3 +2,13 @@ h1 {
   font-size: 48px; line-height: 64px;
   margin: 8px 0;
 }
+
+.CodeMirror-scroll {
+  height: 600px;
+}
+
+#overlay {
+  background: rgba(255, 255, 255, 0.5);
+  z-index: 1338;
+  position: absolute; left: 0; right: 0; top: 0; bottom: 0;
+}

@@ -17,8 +17,8 @@ var io = socketIO.listen(app);
 
 // source: http://devcenter.heroku.com/articles/using-socket-io-with-node-js-on-heroku
 io.configure('production', function () {
-  io.set('transports', ['xhr-polling']); 
-  io.set('polling duration', 10); 
+  io.set('transports', ['xhr-polling']);
+  io.set('polling duration', 10);
 });
 
 var str = "# This is a Markdown heading\n\n"
@@ -28,7 +28,18 @@ var str = "# This is a Markdown heading\n\n"
         + "Lorem *ipsum* dolor **sit** amet.\n\n"
         + "    $ touch test.txt";
 var server = new ot.CodeMirrorServer(str, io.sockets, [], function (socket, cb) {
-    socket.once('auth', function (auth) { cb(auth.name); });
+  cb(!!socket.mayEdit);
+});
+io.sockets.on('connection', function (socket) {
+  socket.on('login', function (obj) {
+    if (typeof obj.name !== 'string') {
+      console.error('obj.name is not a string');
+      return;
+    }
+    socket.mayEdit = true;
+    server.setName(socket, obj.name);
+    socket.emit('logged_in', {});
+  });
 });
 
 var port = process.env.PORT || 3000;
