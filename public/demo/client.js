@@ -65,6 +65,7 @@
         cm.setCursor(cm.posFromIndex(index + 2));
       }
     });
+    cm.focus();
   }
 
   function bold ()   { wrap('**'); }
@@ -88,9 +89,9 @@
   });
 
   var undoBtn = document.getElementById('undo-btn');
-  undoBtn.onclick = function (e) { cm.undo(); stopEvent(e); };
+  undoBtn.onclick = function (e) { cm.undo(); cm.focus(); stopEvent(e); };
   var redoBtn = document.getElementById('redo-btn');
-  redoBtn.onclick = function (e) { cm.redo(); stopEvent(e); };
+  redoBtn.onclick = function (e) { cm.redo(); cm.focus(); stopEvent(e); };
 
   var boldBtn = document.getElementById('bold-btn');
   boldBtn.onclick = function (e) { bold(); stopEvent(e); };
