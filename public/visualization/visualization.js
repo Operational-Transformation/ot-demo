@@ -125,6 +125,11 @@ $(document).ready(function () {
     this.rightEdges = rightEdges;
   }
 
+  DiamondPoint.prototype.equals = function (other) {
+    return this.leftEdges == other.leftEdges &&
+           this.rightEdges == other.rightEdges;
+  };
+
   DiamondPoint.prototype.xPos = function () {
     return this.rightEdges - this.leftEdges;
   };
@@ -133,23 +138,32 @@ $(document).ready(function () {
     return this.rightEdges + this.leftEdges;
   };
 
-  DiamondPoint.prototype.goLeft = function () {
-    return new DiamondEdge(this, LEFT);
+  DiamondPoint.prototype.goLeft = function (data) {
+    return new DiamondEdge(this, LEFT, data);
   };
 
-  DiamondPoint.prototype.goRight = function () {
-    return new DiamondEdge(this, RIGHT);
+  DiamondPoint.prototype.goRight = function (data) {
+    return new DiamondEdge(this, RIGHT, data);
   };
 
   // An edge has a starting point and a direction. The end point is computed.
-  function DiamondEdge (startPoint, direction) {
+  function DiamondEdge (startPoint, direction, data) {
     this.startPoint = startPoint;
     this.direction = direction;
 
+    this.length = 1;
+    if (typeof data == 'object') { extend(this, data); }
+
     if (direction == LEFT) {
-      this.endPoint = new DiamondPoint(startPoint.leftEdges+1, startPoint.rightEdges);
+      this.endPoint = new DiamondPoint(
+        startPoint.leftEdges + this.length,
+        startPoint.rightEdges
+      );
     } else {
-      this.endPoint = new DiamondPoint(startPoint.leftEdges, startPoint.rightEdges+1);
+      this.endPoint = new DiamondPoint(
+        startPoint.leftEdges,
+        startPoint.rightEdges + this.length
+      );
     }
   }
 
@@ -316,7 +330,7 @@ $(document).ready(function () {
 
   MyClient.prototype.initD3 = function () {
     var W = 460;
-    var H = 300;
+    var H = 320;
     var px = W/2;
     var py = 0;
 
@@ -329,11 +343,11 @@ $(document).ready(function () {
         .attr('transform', 'translate(0, 20)');
 
     var x = this.x = d3.scale.linear()
-      .domain([0, 10])
+      .domain([0, 20])
       .range([0, W]);
 
     var y = this.y = d3.scale.linear()
-      .domain([0, 10])
+      .domain([0, 16])
       .range([0, H]);
 
     var drag = d3.behavior.drag()
@@ -380,79 +394,175 @@ $(document).ready(function () {
     this.fromServer = false;
   };
 
+  MyClient.prototype.drawEdges = function () {
+    var x = this.x, y = this.y;
+    var lines = this.edgesLayer.selectAll('.diamond-edge')
+      .data(this.edges);
+
+    lines.enter().append('line')
+      .attr('class', 'diamond-edge')
+      .attr('stroke', function (e) {
+        return e.direction == LEFT ? '#1e488d' : '#d11';
+      })
+      .attr('stroke-width', '4px')
+      .attr('stroke-linecap', 'round')
+      .attr('stroke-dasharray', function (e) {
+        return e.dashed ? '8, 10' : '1, 0';
+      })
+      .attr('x1', function (e) { return x(e.startPoint.xPos()); })
+      .attr('y1', function (e) { return y(e.startPoint.yPos()); })
+      .attr('x2', function (e) { return x(e.endPoint.xPos()); })
+      .attr('y2', function (e) { return y(e.endPoint.yPos()); });
+  };
+
   MyClient.prototype.addEdge = function (edge) {
-    this.edges = this.edges.slice(0);
     this.edges.push(edge);
+    this.drawEdges();
+  };
+
+  MyClient.prototype.setAwaitingAndBufferEdge = function (awaitingEdge, bufferEdge) {
+    if (this.awaitingEdge) {
+      this.awaitingEdge.remove();
+      delete this.awaitingEdge;
+    }
+
+    if (this.bufferEdge) {
+      this.bufferEdge.remove();
+      delete this.bufferEdge;
+    }
 
     var x = this.x, y = this.y;
-    this.edgesLayer.selectAll('line')
-        .data(this.edges)
-      .enter().append('line')
-        .attr('class', 'diamond-edge')
-        .attr('stroke', '#f00')
+    var edgesLayer = this.edgesLayer;
+    function drawEdge (edge, color) {
+      return edgesLayer.append('line')
+        .attr('stroke', color)
         .attr('stroke-width', '4px')
         .attr('stroke-linecap', 'round')
-        .attr('x1', function (e) { return x(e.startPoint.xPos()); })
-        .attr('y1', function (e) { return y(e.startPoint.yPos()); })
-        .attr('x2', function (e) { return x(e.endPoint.xPos()); })
-        .attr('y2', function (e) { return y(e.endPoint.yPos()); });
+        .attr('x1', x(edge.startPoint.xPos()))
+        .attr('y1', y(edge.startPoint.yPos()))
+        .attr('x2', x(edge.endPoint.xPos()))
+        .attr('y2', y(edge.endPoint.yPos()));
+    }
+
+    if (awaitingEdge) {
+      this.awaitingEdge = drawEdge(awaitingEdge, '#ccc');
+    }
+
+    if (bufferEdge) {
+      this.bufferEdge = drawEdge(bufferEdge, '#999');
+    }
+  };
+
+  MyClient.prototype.goLeft = function (data) {
+    data = data || {};
+    if (this.clientStatePoint.equals(this.serverStatePoint)) {
+      var edge = this.clientStatePoint.goLeft(data);
+      this.clientStatePoint = this.serverStatePoint = edge.endPoint;
+      this.addEdge(edge);
+    } else {
+      var serverEdge = this.serverStatePoint.goLeft(data);
+      this.serverStatePoint = serverEdge.endPoint;
+      this.addEdge(serverEdge);
+
+      var clientEdge = this.clientStatePoint.goLeft(extend(data, { dashed: true }));
+      this.clientStatePoint = clientEdge.endPoint;
+      this.addEdge(clientEdge);
+    }
+  };
+
+  MyClient.prototype.goRightClient = function (data) {
+    data = data || {};
+    var edge = this.clientStatePoint.goRight(data);
+    this.clientStatePoint = edge.endPoint;
+    this.addEdge(edge);
+  };
+
+  MyClient.prototype.goRightServer = function (data) {
+    data = data || {};
+    var edge = this.serverStatePoint.goRight(extend(data, { dashed: true }));
+    this.serverStatePoint = edge.endPoint;
+    this.addEdge(edge);
+  };
+
+  MyClient.prototype.applyClient = function (operation) {
+    var v = Client.prototype.applyClient.call(this, operation);
+    this.drawAwaitingAndBufferEdges();
+    return v;
+  };
+
+  MyClient.prototype.applyServer = function (operation) {
+    var v = Client.prototype.applyServer.call(this, operation);
+    this.drawAwaitingAndBufferEdges();
+    return v;
+  };
+
+  MyClient.prototype.drawAwaitingAndBufferEdges = function () {
+    return this.callMethodForState('drawAwaitingAndBufferEdges');
   };
 
   MyClient.prototype.states = {
     synchronized: extend(extend({}, Client.prototype.states.synchronized), {
       applyClient: function (operation) {
-        var edge = this.clientStatePoint.goRight();
-        this.addEdge(edge);
-        this.clientStatePoint = edge.endPoint;
+        this.goRightClient();
+        this.awaitingLength = 1;
         Client.prototype.states.synchronized.applyClient.call(this, operation);
       },
       applyServer: function (operation) {
-        var edge = this.clientStatePoint.goLeft();
-        this.addEdge(edge);
-        this.clientStatePoint = this.serverStatePoint = edge.endPoint;
+        this.goLeft();
         Client.prototype.states.synchronized.applyServer.call(this, operation);
+      },
+      drawAwaitingAndBufferEdges: function () {
+        this.setAwaitingAndBufferEdge(null, null);
       }
     }),
     awaitingConfirm: extend(extend({}, Client.prototype.states.awaitingConfirm), {
       applyClient: function (operation) {
-        var edge = this.clientStatePoint.goRight();
-        this.addEdge(edge);
-        this.clientStatePoint = edge.endPoint;
+        this.goRightClient();
+        this.bufferLength = 1;
         Client.prototype.states.awaitingConfirm.applyClient.call(this, operation);
       },
       applyServer: function (operation) {
-        var edge;
         if (operation.id !== this.outstanding.id) {
-          // received awaited operation back
           highlight($('.operation', this.stateEl));
-          edge = this.serverStatePoint.goLeft();
+          this.goLeft();
         } else {
-          edge = this.serverStatePoint.goRight();
+          // received awaited operation back
+          this.goRightServer({ length: this.awaitingLength });
+          delete this.awaitingLength;
         }
-        this.addEdge(edge);
-        this.serverStatePoint = edge.endPoint;
 
         Client.prototype.states.awaitingConfirm.applyServer.call(this, operation);
+      },
+      drawAwaitingAndBufferEdges: function () {
+        this.setAwaitingAndBufferEdge(
+          this.serverStatePoint.goRight({ length: this.awaitingLength }),
+          null
+        );
       }
     }),
     awaitingWithBuffer: extend(extend({}, Client.prototype.states.awaitingWithBuffer), {
       applyClient: function (operation) {
-        // operation will get composed onto the buffer => we don't need a new edge
+        this.bufferLength++;
+        this.goRightClient();
         highlight($('.operation', this.stateEl).eq(1));
         Client.prototype.states.awaitingWithBuffer.applyClient.call(this, operation);
       },
       applyServer: function (operation) {
-        var edge;
         if (operation.id !== this.outstanding.id) {
-          // received awaited operation back
           highlight($('.operation', this.stateEl));
-          edge = this.serverStatePoint.goLeft();
+          this.goLeft();
         } else {
-          edge = this.serverStatePoint.goRight();
+          // received awaited operation back
+          this.goRightServer({ length: this.awaitingLength });
+          this.awaitingLength = this.bufferLength;
+          delete this.bufferLength;
         }
-        this.addEdge(edge);
-        this.serverStatePoint = edge.endPoint;
         Client.prototype.states.awaitingWithBuffer.applyServer.call(this, operation);
+      },
+      drawAwaitingAndBufferEdges: function () {
+        var awaitingEdge = this.serverStatePoint.goRight({ length: this.awaitingLength });
+        var bufferEdge = awaitingEdge.endPoint.goRight({ length: this.bufferLength });
+        this.setAwaitingAndBufferEdge(awaitingEdge, bufferEdge);
       }
     })
   };
