@@ -3,7 +3,7 @@ h1 {
 }
 
 #visualization {
-  height: 510px;
+  height: 830px;
   position: relative;
 }
 
@@ -119,6 +119,14 @@ h1 {
 .op-retain { color: #3a3a3a; }
 .op-insert { color: #1a7324; }
 .op-delete { color: #ce1b0f; }
+
+#alice-diamond-diagram, #bob-diamond-diagram {
+  position: absolute;
+  top: 530px;
+}
+
+#alice-diamond-diagram { left: 0; }
+#bob-diamond-diagram { right: 0; }
 
 footer {
   border-top: 1px solid #eee;

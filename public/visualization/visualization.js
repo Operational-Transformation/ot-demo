@@ -88,6 +88,7 @@ $(document).ready(function () {
     this.alice = new MyClient("Alice", str, 0, this.aliceSendChannel)
       .appendTo(this.el);
     this.alice.el.attr({ id: 'alice' });
+    this.alice.svg.attr('id', 'alice-diamond-diagram');
     this.bobSendChannel = new NetworkChannel(true, function (o) {
       self.server.receiveOperation(o);
     }).appendTo(this.el);
@@ -99,6 +100,7 @@ $(document).ready(function () {
     this.bob = new MyClient("Bob", str, 0, this.bobSendChannel)
       .appendTo(this.el);
     this.bob.el.attr({ id: 'bob' });
+    this.bob.svg.attr('id', 'bob-diamond-diagram');
   }
 
   extend(Visualization.prototype, View);
@@ -109,6 +111,47 @@ $(document).ready(function () {
     this.bob.cm.refresh();
     return this;
   };
+
+
+  // Diamond diagram
+
+  var LEFT = 'left'
+  ,   RIGHT = 'right';
+
+  // A crossing point on a diamond diagram is uniquely identified by the number
+  // of steps left and right from a common starting point
+  function DiamondPoint (leftEdges, rightEdges) {
+    this.leftEdges = leftEdges;
+    this.rightEdges = rightEdges;
+  }
+
+  DiamondPoint.prototype.xPos = function () {
+    return this.rightEdges - this.leftEdges;
+  };
+
+  DiamondPoint.prototype.yPos = function () {
+    return this.rightEdges + this.leftEdges;
+  };
+
+  DiamondPoint.prototype.goLeft = function () {
+    return new DiamondEdge(this, LEFT);
+  };
+
+  DiamondPoint.prototype.goRight = function () {
+    return new DiamondEdge(this, RIGHT);
+  };
+
+  // An edge has a starting point and a direction. The end point is computed.
+  function DiamondEdge (startPoint, direction) {
+    this.startPoint = startPoint;
+    this.direction = direction;
+
+    if (direction == LEFT) {
+      this.endPoint = new DiamondPoint(startPoint.leftEdges+1, startPoint.rightEdges);
+    } else {
+      this.endPoint = new DiamondPoint(startPoint.leftEdges, startPoint.rightEdges+1);
+    }
+  }
 
 
   // Network channel
@@ -223,6 +266,9 @@ $(document).ready(function () {
     this.channel = channel;
     this.fromServer = false;
 
+    this.serverStatePoint = this.clientStatePoint = new DiamondPoint(0, 0);
+    this.edges = [];
+
     this.oldValue = str;
 
     var self = this;
@@ -255,10 +301,74 @@ $(document).ready(function () {
         self.oldValue = self.cm.getValue();
       }
     });
+
+    this.initD3();
   }
 
   inherit(MyClient, Client);
   extend(MyClient.prototype, View);
+
+  MyClient.prototype.appendTo = function (el) {
+    View.appendTo.call(this, el);
+    $(this.svg[0]).appendTo(el);
+    return this;
+  };
+
+  MyClient.prototype.initD3 = function () {
+    var W = 460;
+    var H = 300;
+    var px = W/2;
+    var py = 0;
+
+    var svg = this.svg = d3.select('body').append('svg')
+        .attr('class', 'diamond-diagram')
+        .attr('width', W)
+        .attr('height', H);
+
+    var diagram = svg.append('g')
+        .attr('transform', 'translate(0, 20)');
+
+    var x = this.x = d3.scale.linear()
+      .domain([0, 10])
+      .range([0, W]);
+
+    var y = this.y = d3.scale.linear()
+      .domain([0, 10])
+      .range([0, H]);
+
+    var drag = d3.behavior.drag()
+      .on('drag', function () {
+        py = Math.min(0, py + d3.event.dy);
+        px += d3.event.dx;
+
+        rulesLayer.attr('transform', 'translate(0,'+py+')');
+        edgesLayer.attr('transform', 'translate('+px+','+py+')');
+      });
+
+    svg.call(drag);
+
+    // draw horizontal rules
+    var rulesLayer = diagram.append('g');
+    var rules = rulesLayer.selectAll('.rule')
+        .data(d3.range(200))
+      .enter().append('g')
+        .attr('class', 'rule')
+        .attr('transform', function (i) { return 'translate(0,'+y(i)+')'; });
+
+    rules.append('line')
+      .attr('stroke', '#ddd')
+      .attr('y1', '0.5').attr('y2', '0.5')
+      .attr('x1', '30').attr('x2', W);
+
+    rules.append('text')
+      .text(String)
+      .attr('x', 15)
+      .attr('dy', '0.35em')
+      .attr('text-anchor', 'middle');
+
+    var edgesLayer = this.edgesLayer = diagram.append('g')
+        .attr('transform', 'translate('+px+','+py+')');
+  };
 
   MyClient.prototype.sendOperation = function (operation) {
     this.channel.write(operation);
@@ -270,31 +380,82 @@ $(document).ready(function () {
     this.fromServer = false;
   };
 
+  MyClient.prototype.addEdge = function (edge) {
+    this.edges = this.edges.slice(0);
+    this.edges.push(edge);
+
+    var x = this.x, y = this.y;
+    this.edgesLayer.selectAll('line')
+        .data(this.edges)
+      .enter().append('line')
+        .attr('class', 'diamond-edge')
+        .attr('stroke', '#f00')
+        .attr('stroke-width', '4px')
+        .attr('stroke-linecap', 'round')
+        .attr('x1', function (e) { return x(e.startPoint.xPos()); })
+        .attr('y1', function (e) { return y(e.startPoint.yPos()); })
+        .attr('x2', function (e) { return x(e.endPoint.xPos()); })
+        .attr('y2', function (e) { return y(e.endPoint.yPos()); });
+  };
+
   MyClient.prototype.states = {
-    synchronized: extend(extend({}, Client.prototype.states.synchronized), {}),
-    awaitingConfirm: extend(extend({}, Client.prototype.states.awaitingConfirm), {
+    synchronized: extend(extend({}, Client.prototype.states.synchronized), {
+      applyClient: function (operation) {
+        var edge = this.clientStatePoint.goRight();
+        this.addEdge(edge);
+        this.clientStatePoint = edge.endPoint;
+        Client.prototype.states.synchronized.applyClient.call(this, operation);
+      },
       applyServer: function (operation) {
+        var edge = this.clientStatePoint.goLeft();
+        this.addEdge(edge);
+        this.clientStatePoint = this.serverStatePoint = edge.endPoint;
+        Client.prototype.states.synchronized.applyServer.call(this, operation);
+      }
+    }),
+    awaitingConfirm: extend(extend({}, Client.prototype.states.awaitingConfirm), {
+      applyClient: function (operation) {
+        var edge = this.clientStatePoint.goRight();
+        this.addEdge(edge);
+        this.clientStatePoint = edge.endPoint;
+        Client.prototype.states.awaitingConfirm.applyClient.call(this, operation);
+      },
+      applyServer: function (operation) {
+        var edge;
         if (operation.id !== this.outstanding.id) {
+          // received awaited operation back
           highlight($('.operation', this.stateEl));
+          edge = this.serverStatePoint.goLeft();
+        } else {
+          edge = this.serverStatePoint.goRight();
         }
+        this.addEdge(edge);
+        this.serverStatePoint = edge.endPoint;
+
         Client.prototype.states.awaitingConfirm.applyServer.call(this, operation);
       }
     }),
     awaitingWithBuffer: extend(extend({}, Client.prototype.states.awaitingWithBuffer), {
       applyClient: function (operation) {
+        // operation will get composed onto the buffer => we don't need a new edge
         highlight($('.operation', this.stateEl).eq(1));
         Client.prototype.states.awaitingWithBuffer.applyClient.call(this, operation);
       },
       applyServer: function (operation) {
+        var edge;
         if (operation.id !== this.outstanding.id) {
+          // received awaited operation back
           highlight($('.operation', this.stateEl));
+          edge = this.serverStatePoint.goLeft();
+        } else {
+          edge = this.serverStatePoint.goRight();
         }
+        this.addEdge(edge);
+        this.serverStatePoint = edge.endPoint;
         Client.prototype.states.awaitingWithBuffer.applyServer.call(this, operation);
       }
     })
   };
-
-  console.log(MyClient.prototype.states);
 
   var stateTransitions = {
     'synchronized->awaitingConfirm': function () {
