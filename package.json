@@ -15,8 +15,8 @@
   },
   "dependencies": {
     "operational-transformation": "0.0.5",
-    "express": "2.5.8",
-    "socket.io": "0.9.2"
+    "express": "2.5.10",
+    "socket.io": "0.9.6"
   },
   "licenses": [
     {
