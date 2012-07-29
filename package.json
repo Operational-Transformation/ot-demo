@@ -14,9 +14,9 @@
     "url": "https://github.com/timjb/javascript-operational-transformation-demo/issues"
   },
   "dependencies": {
-    "operational-transformation": "0.0.5",
-    "express": "2.5.10",
-    "socket.io": "0.9.6"
+    "operational-transformation": "0.0.7",
+    "express": "2.5.11",
+    "socket.io": "0.9.8"
   },
   "licenses": [
     {

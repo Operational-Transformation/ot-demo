@@ -32,7 +32,7 @@ $(document).ready(function () {
       } else if (op.insert) {
         html += '<span class="op-insert">insert("' + op.insert + '")</span>';
       } else {
-        html += '<span class="op-delete">delete("' + op.delete + '")</span>';
+        html += '<span class="op-delete">delete(' + op.delete + ')</span>';
       }
     }
     return html;
