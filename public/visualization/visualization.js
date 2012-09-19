@@ -301,20 +301,22 @@ $(document).ready(function () {
     this.stateEl = $('<p class="state" />')
       .html("<strong>State:</strong> <span>Synchronized</span>")
       .appendTo(this.el);
-    this.cm = CodeMirror($('<div />').appendTo(this.el).get(0), {
+    var cmWrapper = $('<div />').appendTo(document.body);
+    this.cm = CodeMirror(cmWrapper.get(0), {
       lineNumbers: true,
       lineWrapping: true,
-      value: str,
-      onChange: function (cm, change) {
-        if (!self.fromServer) {
-          var operation = self.createOperation().fromCodeMirrorChange(change, self.oldValue);
-          operation.meta.creator = self.name;
-          console.log(change, operation);
-          self.applyClient(operation);
-        }
-        self.oldValue = self.cm.getValue();
-      }
+      value: str
     });
+    this.cm.on('change', function (cm, change) {
+      if (!self.fromServer) {
+        var operation = self.createOperation().fromCodeMirrorChange(change, self.oldValue);
+        operation.meta.creator = self.name;
+        console.log(change, operation);
+        self.applyClient(operation);
+      }
+      self.oldValue = self.cm.getValue();
+    });
+    cmWrapper.detach().appendTo(this.el);
 
     this.initD3();
   }

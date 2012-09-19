@@ -70,7 +70,7 @@
     for (var prop in o) if (o.hasOwnProperty(prop)) f(prop, o[prop]);
   }
   function iterList(l, f) {
-    for (var i in l) f(l[i]);
+    for (var i = 0; i < l.length; ++i) f(l[i]);
   }
   function toLetter(ch) {
     // T -> t, Shift-T -> T, '*' -> *, "Space" -> " "
@@ -145,7 +145,7 @@
     if (cur.line != cm.lineCount()) {
       CodeMirror.commands.goLineEnd(cm);
       cm.replaceSelection(" ", "end");
-      CodeMirror.commands.delCharRight(cm);
+      CodeMirror.commands.delCharAfter(cm);
     }
   }
   function delTillMark(cm, cHar) {
@@ -229,7 +229,8 @@
     else f(prompt(shortText, ""));
   }
   function showAlert(cm, text) {
-    if (cm.openDialog) cm.openDialog(CodeMirror.htmlEscape(text) + " <button type=button>OK</button>");
+    var esc = text.replace(/[<&]/, function(ch) { return ch == "<" ? "&lt;" : "&amp;"; });
+    if (cm.openDialog) cm.openDialog(esc + " <button type=button>OK</button>");
     else alert(text);
   }
 
@@ -273,7 +274,7 @@
 
     "S": function (cm) {
       countTimes(function (_cm) {
-        CodeMirror.commands.delCharRight(_cm);
+        CodeMirror.commands.delCharAfter(_cm);
       })(cm);
       enterInsertMode(cm);
     },
@@ -340,7 +341,7 @@
     "Left": "goColumnLeft", "Right": "goColumnRight",
     "Down": "goLineDown", "Up": "goLineUp", "Backspace": "goCharLeft",
     "Space": "goCharRight",
-    "X": function(cm) {CodeMirror.commands.delCharRight(cm);},
+    "X": function(cm) {CodeMirror.commands.delCharAfter(cm);},
     "P": function(cm) {
       var cur = cm.getCursor().line;
       if (buf!= "") {
@@ -348,7 +349,7 @@
         cm.replaceRange(buf, cm.getCursor());
       }
     },
-    "Shift-X": function(cm) {CodeMirror.commands.delCharLeft(cm);},
+    "Shift-X": function(cm) {CodeMirror.commands.delCharBefore(cm);},
     "Shift-J": function(cm) {joinLineNext(cm);},
     "Shift-P": function(cm) {
       var cur = cm.getCursor().line;
@@ -433,14 +434,14 @@
 
   CodeMirror.keyMap["vim-prefix-c"] = {
     "B": function (cm) {
-      countTimes("delWordLeft")(cm);
+      countTimes("delWordBefore")(cm);
       enterInsertMode(cm);
     },
     "C": function (cm) {
       iterTimes(function (i, last) {
         CodeMirror.commands.deleteLine(cm);
         if (i) {
-          CodeMirror.commands.delCharRight(cm);
+          CodeMirror.commands.delCharAfter(cm);
           if (last) CodeMirror.commands.deleteLine(cm);
         }
       });
@@ -502,13 +503,16 @@
     setupPrefixBindingForKey(toCombo(ch));
     setupPrefixBindingForKey(toCombo(ch.toLowerCase()));
   }
-  iterList(SPECIAL_SYMBOLS, function (ch) {
-    setupPrefixBindingForKey(toCombo(ch));
-  });
+  for (var i = 0; i < SPECIAL_SYMBOLS.length; ++i) {
+    setupPrefixBindingForKey(toCombo(SPECIAL_SYMBOLS.charAt(i)));
+  }
   setupPrefixBindingForKey("Space");
 
   CodeMirror.keyMap["vim-prefix-y"] = {
-    "Y": countTimes(function(cm) { pushInBuffer("\n"+cm.getLine(cm.getCursor().line+yank)); yank++; }),
+    "Y": countTimes(function(cm) {
+      pushInBuffer("\n"+cm.getLine(cm.getCursor().line+yank)); yank++;
+      cm.setOption("keyMap", "vim");
+    }),
     "'": function(cm) {cm.setOption("keyMap", "vim-prefix-y'"); emptyBuffer();},
     nofallthrough: true, style: "fat-cursor"
   };

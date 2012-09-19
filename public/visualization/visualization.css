@@ -37,7 +37,7 @@ h1 {
 .client .CodeMirror-gutter {
   background: #eeeeee;
 }
-.client .CodeMirror-scroll {
+.client .CodeMirror {
   height: 120px;
 }
 

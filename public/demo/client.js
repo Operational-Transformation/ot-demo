@@ -76,16 +76,16 @@
   var cm = window.cm = CodeMirror(editorWrapper, {
     lineNumbers: true,
     lineWrapping: true,
-    mode: 'markdown',
-    onChange: function () {
-      if (!cmClient) { return; }
-      function enableConditionally (stack, el) {
-        if (stack.length === 0) { disable(el); }
-        else                    { enable(el); }
-      }
-      enableConditionally(cmClient.undoStack, undoBtn);
-      enableConditionally(cmClient.redoStack, redoBtn);
+    mode: 'markdown'
+  });
+  cm.on('change', function () {
+    if (!cmClient) { return; }
+    function enableConditionally (stack, el) {
+      if (stack.length === 0) { disable(el); }
+      else                    { enable(el); }
     }
+    enableConditionally(cmClient.undoStack, undoBtn);
+    enableConditionally(cmClient.redoStack, redoBtn);
   });
 
   var undoBtn = document.getElementById('undo-btn');

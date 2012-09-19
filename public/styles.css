@@ -12,3 +12,6 @@ h1 {
   z-index: 1338;
   position: absolute; left: 0; right: 0; top: 0; bottom: 0;
 }
+
+/* only CodeMirror v3 can do that */
+.cm-header { font-size: 150%; font-family: Helvetica, Arial, sans-serif; }
