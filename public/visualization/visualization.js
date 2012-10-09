@@ -1,6 +1,8 @@
 $(document).ready(function () {
   var Client = ot.Client;
   var Server = ot.Server;
+  var TextOperation = ot.TextOperation;
+  var WrappedOperation = ot.WrappedOperation;
 
   // View
 
@@ -42,16 +44,16 @@ $(document).ready(function () {
     return function () {
       return '<table class="table table-condensed table-noheader">'
            + tr("Author", operation.meta.creator)
-           + tr("Revision", operation.revision)
-           + tr("Changeset", operationToHtml(operation))
+           + (typeof operation.revision === 'number' ? tr("Revision", operation.revision) : '')
+           + tr("Changeset", operationToHtml(operation.wrapped))
            + '</table>';
     };
   }
 
   function createOperationElement (operation) {
     return $('<span class="operation" title="Operation" />')
-      .addClass('operation' + operation.id)
-      .attr({ 'data-operation-id': operation.id })
+      .addClass('operation' + operation.meta.id)
+      .attr({ 'data-operation-id': operation.meta.id })
       .addClass(operation.meta.creator.toLowerCase());
   }
 
@@ -72,35 +74,41 @@ $(document).ready(function () {
       });
 
     var self = this;
+    function serverReceive (o) {
+      var oPrime = self.server.receiveOperation(o.revision, o);
+      delete o.revision;
+      self.server.appendToHistory(oPrime);
+      self.aliceReceiveChannel.write(oPrime);
+      self.bobReceiveChannel.write(oPrime);
+    }
+    function clientReceive (client) {
+      return function (o) {
+        if (o.meta.creator === client.name) {
+          client.serverAck();
+        } else {
+          client.applyServer(o);
+        }
+      };
+    }
     this.server = new MyServer(str, function (operation) {
-      self.server.appendToHistory(operation);
-      self.aliceReceiveChannel.write(operation);
-      self.bobReceiveChannel.write(operation);
     }).appendTo(this.el);
-    this.aliceSendChannel = new NetworkChannel(true, function (o) {
-      self.server.receiveOperation(o);
-    }).appendTo(this.el);
+    this.aliceSendChannel = new NetworkChannel(true, serverReceive).appendTo(this.el);
     this.aliceSendChannel.el.attr({ id: 'alice-send-channel' });
-    this.aliceReceiveChannel = new NetworkChannel(false, function (o) {
-      self.alice.applyServer(o);
-    }).appendTo(this.el);
-    this.aliceReceiveChannel.el.attr({ id: 'alice-receive-channel' });
     this.alice = new MyClient("Alice", str, 0, this.aliceSendChannel)
       .appendTo(this.el);
     this.alice.el.attr({ id: 'alice' });
     this.alice.svg.attr('id', 'alice-diamond-diagram');
-    this.bobSendChannel = new NetworkChannel(true, function (o) {
-      self.server.receiveOperation(o);
-    }).appendTo(this.el);
+    this.aliceReceiveChannel = new NetworkChannel(false, clientReceive(this.alice)).appendTo(this.el);
+    this.aliceReceiveChannel.el.attr({ id: 'alice-receive-channel' });
+
+    this.bobSendChannel = new NetworkChannel(true, serverReceive).appendTo(this.el);
     this.bobSendChannel.el.attr({ id: 'bob-send-channel' });
-    this.bobReceiveChannel = new NetworkChannel(false, function (o) {
-      self.bob.applyServer(o);
-    }).appendTo(this.el);
-    this.bobReceiveChannel.el.attr({ id: 'bob-receive-channel' });
     this.bob = new MyClient("Bob", str, 0, this.bobSendChannel)
       .appendTo(this.el);
     this.bob.el.attr({ id: 'bob' });
     this.bob.svg.attr('id', 'bob-diamond-diagram');
+    this.bobReceiveChannel = new NetworkChannel(false, clientReceive(this.bob)).appendTo(this.el);
+    this.bobReceiveChannel.el.attr({ id: 'bob-receive-channel' });
   }
 
   extend(Visualization.prototype, View);
@@ -242,13 +250,12 @@ $(document).ready(function () {
 
   // MyServer
 
-  function MyServer (str, broadcast) {
-    Server.call(this, str);
-    this.broadcast = broadcast;
+  function MyServer (doc) {
+    Server.call(this, doc);
     this.el = $('<div id="server" class="well" />');
     $('<h2 />').text("Server").appendTo(this.el);
     this.stateTable = $('<table class="table table-condensed table-noheader" />').html(
-      tr("Content", quote(unescape(this.str)), 'server-content') +
+      tr("Content", quote(unescape(this.document)), 'server-content') +
       tr("History", "", 'server-history')
     ).appendTo(this.el);
   }
@@ -256,10 +263,11 @@ $(document).ready(function () {
   inherit(MyServer, Server);
   extend(MyServer.prototype, View);
 
-  MyServer.prototype.receiveOperation = function (operation) {
+  MyServer.prototype.receiveOperation = function (revision, operation) {
     highlight(this.$('.server-history .operation').slice(operation.revision));
-    Server.prototype.receiveOperation.call(this, operation);
-    this.$('.server-content td').text(quote(unescape(this.str)));
+    var operationPrime = Server.prototype.receiveOperation.call(this, revision, operation);
+    this.$('.server-content td').text(quote(unescape(this.document)));
+    return operationPrime;
   };
 
   MyServer.prototype.appendToHistory = function (operation) {
@@ -291,9 +299,9 @@ $(document).ready(function () {
         selector: '.operation',
         content: function () {
           if ($(this).hasClass('buffer')) {
-            return operationPopoverContent(self.buffer)();
+            return operationPopoverContent(self.state.buffer)();
           } else {
-            return operationPopoverContent(self.outstanding)();
+            return operationPopoverContent(self.state.outstanding)();
           }
         }
       });
@@ -309,8 +317,10 @@ $(document).ready(function () {
     });
     this.cm.on('change', function (cm, change) {
       if (!self.fromServer) {
-        var operation = self.createOperation().fromCodeMirrorChange(change, self.oldValue);
-        operation.meta.creator = self.name;
+        var operation = new WrappedOperation(
+          TextOperation.fromCodeMirrorChange(change, self.oldValue),
+          { creator: self.name, id: generateOperationId() }
+        );
         console.log(change, operation);
         self.applyClient(operation);
       }
@@ -386,13 +396,14 @@ $(document).ready(function () {
         .attr('transform', 'translate('+px+','+py+')');
   };
 
-  MyClient.prototype.sendOperation = function (operation) {
+  MyClient.prototype.sendOperation = function (revision, operation) {
+    operation.revision = revision;
     this.channel.write(operation);
   };
 
   MyClient.prototype.applyOperation = function (operation) {
     this.fromServer = true;
-    operation.applyToCodeMirror(this.cm);
+    operation.wrapped.applyToCodeMirror(this.cm);
     this.fromServer = false;
   };
 
@@ -486,124 +497,144 @@ $(document).ready(function () {
     this.addEdge(edge);
   };
 
-  MyClient.prototype.applyClient = function (operation) {
-    var v = Client.prototype.applyClient.call(this, operation);
-    this.drawAwaitingAndBufferEdges();
-    return v;
-  };
+  MyClient.prototype.setState = function (state) {
+    var oldState = this.state;
+    this.state = state;
 
-  MyClient.prototype.applyServer = function (operation) {
-    var v = Client.prototype.applyServer.call(this, operation);
-    this.drawAwaitingAndBufferEdges();
-    return v;
-  };
-
-  MyClient.prototype.drawAwaitingAndBufferEdges = function () {
-    return this.callMethodForState('drawAwaitingAndBufferEdges');
-  };
-
-  MyClient.prototype.states = {
-    synchronized: extend(extend({}, Client.prototype.states.synchronized), {
-      applyClient: function (operation) {
-        this.goRightClient();
-        this.awaitingLength = 1;
-        Client.prototype.states.synchronized.applyClient.call(this, operation);
-      },
-      applyServer: function (operation) {
-        this.goLeft();
-        Client.prototype.states.synchronized.applyServer.call(this, operation);
-      },
-      drawAwaitingAndBufferEdges: function () {
-        this.setAwaitingAndBufferEdge(null, null);
+    for (var i = 0; i < stateTransitions.length; i++) {
+      var transition = stateTransitions[i];
+      if (oldState instanceof transition[0] && state instanceof transition[1]) {
+        transition[2].call(this);
+        break;
       }
-    }),
-    awaitingConfirm: extend(extend({}, Client.prototype.states.awaitingConfirm), {
-      applyClient: function (operation) {
-        this.goRightClient();
-        this.bufferLength = 1;
-        Client.prototype.states.awaitingConfirm.applyClient.call(this, operation);
-      },
-      applyServer: function (operation) {
-        if (operation.id !== this.outstanding.id) {
-          highlight($('.operation', this.stateEl));
-          this.goLeft();
-        } else {
-          // received awaited operation back
-          this.goRightServer({ length: this.awaitingLength });
-          delete this.awaitingLength;
-        }
-
-        Client.prototype.states.awaitingConfirm.applyServer.call(this, operation);
-      },
-      drawAwaitingAndBufferEdges: function () {
-        this.setAwaitingAndBufferEdge(
-          this.serverStatePoint.goRight({ length: this.awaitingLength }),
-          null
-        );
-      }
-    }),
-    awaitingWithBuffer: extend(extend({}, Client.prototype.states.awaitingWithBuffer), {
-      applyClient: function (operation) {
-        this.bufferLength++;
-        this.goRightClient();
-        highlight($('.operation', this.stateEl).eq(1));
-        Client.prototype.states.awaitingWithBuffer.applyClient.call(this, operation);
-      },
-      applyServer: function (operation) {
-        if (operation.id !== this.outstanding.id) {
-          highlight($('.operation', this.stateEl));
-          this.goLeft();
-        } else {
-          // received awaited operation back
-          this.goRightServer({ length: this.awaitingLength });
-          this.awaitingLength = this.bufferLength;
-          delete this.bufferLength;
-        }
-        Client.prototype.states.awaitingWithBuffer.applyServer.call(this, operation);
-      },
-      drawAwaitingAndBufferEdges: function () {
-        var awaitingEdge = this.serverStatePoint.goRight({ length: this.awaitingLength });
-        var bufferEdge = awaitingEdge.endPoint.goRight({ length: this.bufferLength });
-        this.setAwaitingAndBufferEdge(awaitingEdge, bufferEdge);
-      }
-    })
-  };
-
-  var stateTransitions = {
-    'synchronized->awaitingConfirm': function () {
-      var self = this;
-      $('> span', this.stateEl)
-        .text("Awaiting ")
-        .append(createOperationElement(this.outstanding).addClass('outstanding'))
-        .append(document.createTextNode(" "));
-    },
-    'awaitingConfirm->awaitingWithBuffer': function () {
-      var self = this;
-      $('<span>with buffer </span>')
-        .append(createOperationElement(this.buffer).addClass('buffer'))
-        .fadeIn()
-        .appendTo(this.stateEl);
-    },
-    'awaitingWithBuffer->awaitingConfirm': function () {
-      var spans = $('> span', this.stateEl);
-      hideSpan(spans.eq(0));
-      spans.get(1).firstChild.data = "Awaiting ";
-      spans.eq(1).append(document.createTextNode(" "));
-      createOperationElement(this.outstanding)
-        .addClass('outstanding')
-        .replaceAll($('.operation', this.stateEl).eq(1));
-    },
-    'awaitingConfirm->synchronized': function () {
-      $('> span', this.stateEl).text("Synchronized");
     }
   };
 
-  MyClient.prototype.transitionTo = function () {
-    var oldState = this.state;
-    Client.prototype.transitionTo.apply(this, arguments);
-    //this.stateEl.text("State: " + this.state);
-    stateTransitions[oldState + '->' + this.state].call(this);
+  MyClient.prototype.applyClient = function (operation) {
+    this.state.beforeApplyClient(this);
+    Client.prototype.applyClient.call(this, operation);
+    this.drawAwaitingAndBufferEdges();
   };
+
+  MyClient.prototype.applyServer = function (operation) {
+    this.state.beforeApplyServer(this);
+    Client.prototype.applyServer.call(this, operation);
+    this.drawAwaitingAndBufferEdges();
+  };
+
+  MyClient.prototype.serverAck = function () {
+    this.state.beforeServerAck(this);
+    Client.prototype.serverAck.call(this);
+    this.drawAwaitingAndBufferEdges();
+  };
+
+  MyClient.prototype.drawAwaitingAndBufferEdges = function () {
+    this.state.drawAwaitingAndBufferEdges(this);
+  };
+
+
+  Client.Synchronized.prototype.beforeApplyClient = function (client) {
+    client.goRightClient();
+    client.awaitingLength = 1;
+  };
+
+  Client.Synchronized.prototype.beforeApplyServer = function (client) {
+    client.goLeft();
+  };
+
+  Client.Synchronized.prototype.beforeServerAck = function () {};
+
+  Client.Synchronized.prototype.drawAwaitingAndBufferEdges = function (client) {
+    client.setAwaitingAndBufferEdge(null, null);
+  };
+
+
+  Client.AwaitingConfirm.prototype.beforeApplyClient = function (client) {
+    client.goRightClient();
+    client.bufferLength = 1;
+  };
+
+  Client.AwaitingConfirm.prototype.beforeApplyServer = function (client) {
+    highlight($('.operation', client.stateEl));
+    client.goLeft();
+  };
+
+  Client.AwaitingConfirm.prototype.beforeServerAck = function (client) {
+    client.goRightServer({ length: client.awaitingLength });
+    delete client.awaitingLength;
+  };
+
+  Client.AwaitingConfirm.prototype.drawAwaitingAndBufferEdges = function (client) {
+    client.setAwaitingAndBufferEdge(
+      client.serverStatePoint.goRight({ length: client.awaitingLength }),
+      null
+    );
+  };
+
+
+  Client.AwaitingWithBuffer.prototype.beforeApplyClient = function (client) {
+    client.bufferLength++;
+    client.goRightClient();
+    highlight($('.operation', client.stateEl).eq(1));
+  };
+
+  Client.AwaitingWithBuffer.prototype.beforeApplyServer = Client.AwaitingConfirm.prototype.beforeApplyServer;
+
+  Client.AwaitingWithBuffer.prototype.beforeServerAck = function (client) {
+    client.goRightServer({ length: client.awaitingLength });
+    client.awaitingLength = client.bufferLength;
+    delete client.bufferLength;
+  };
+
+  Client.AwaitingWithBuffer.prototype.drawAwaitingAndBufferEdges = function (client) {
+    var awaitingEdge = client.serverStatePoint.goRight({ length: client.awaitingLength });
+    var bufferEdge = awaitingEdge.endPoint.goRight({ length: client.bufferLength });
+    client.setAwaitingAndBufferEdge(awaitingEdge, bufferEdge);
+  };
+
+
+  var stateTransitions = [
+    [
+      Client.Synchronized,
+      Client.AwaitingConfirm,
+      function () {
+        $('> span', this.stateEl)
+          .text("Awaiting ")
+          .append(createOperationElement(this.state.outstanding).addClass('outstanding'))
+          .append(document.createTextNode(" "));
+      }
+    ],
+    [
+      Client.AwaitingConfirm,
+      Client.AwaitingWithBuffer,
+      function () {
+        $('<span>with buffer </span>')
+          .append(createOperationElement(this.state.buffer).addClass('buffer'))
+          .fadeIn()
+          .appendTo(this.stateEl);
+      }
+    ],
+    [
+      Client.AwaitingWithBuffer,
+      Client.AwaitingConfirm,
+      function () {
+        var spans = $('> span', this.stateEl);
+        hideSpan(spans.eq(0));
+        spans.get(1).firstChild.data = "Awaiting ";
+        spans.eq(1).append(document.createTextNode(" "));
+        createOperationElement(this.state.outstanding)
+          .addClass('outstanding')
+          .replaceAll($('.operation', this.stateEl).eq(1));
+      }
+    ],
+    [
+      Client.AwaitingConfirm,
+      Client.Synchronized,
+      function () {
+        $('> span', this.stateEl).text("Synchronized");
+      }
+    ]
+  ];
 
 
   // Helper functions
@@ -627,6 +658,13 @@ $(document).ready(function () {
   function async (fn) {
     setTimeout(fn, 0);
   }
+
+  var generateOperationId = (function () {
+    var counter = 1;
+    return function () {
+      return 'operation' + (counter++);
+    };
+  })();
 
   function tr (th, td, klass) {
     klass = klass ? ' class="'+klass+'"' : '';
