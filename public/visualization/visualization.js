@@ -29,12 +29,12 @@ $(document).ready(function () {
     for (var i = 0; i < ops.length; i++) {
       if (i !== 0) { html += ", "; }
       var op = ops[i];
-      if (op.retain) {
-        html += '<span class="op-retain">retain(' + op.retain + ')</span>';
-      } else if (op.insert) {
-        html += '<span class="op-insert">insert("' + op.insert + '")</span>';
+      if (TextOperation.isRetain(op)) {
+        html += '<span class="op-retain">retain(' + op + ')</span>';
+      } else if (TextOperation.isInsert(op)) {
+        html += '<span class="op-insert">insert("' + op + '")</span>';
       } else {
-        html += '<span class="op-delete">delete(' + op.delete + ')</span>';
+        html += '<span class="op-delete">delete(' + (-op) + ')</span>';
       }
     }
     return html;
@@ -42,11 +42,13 @@ $(document).ready(function () {
 
   function operationPopoverContent (operation) {
     return function () {
-      return '<table class="table table-condensed table-noheader">'
-           + tr("Author", operation.meta.creator)
-           + (typeof operation.revision === 'number' ? tr("Revision", operation.revision) : '')
-           + tr("Changeset", operationToHtml(operation.wrapped))
-           + '</table>';
+      return [
+        '<table class="table table-condensed table-noheader">',
+        tr("Author", operation.meta.creator),
+        typeof operation.revision === 'number' ? tr("Revision", operation.revision) : '',
+        tr("Changeset", operationToHtml(operation.wrapped)),
+        '</table>'
+      ].join('\n');
     };
   }
 
@@ -123,8 +125,7 @@ $(document).ready(function () {
 
   // Diamond diagram
 
-  var LEFT = 'left'
-  ,   RIGHT = 'right';
+  var LEFT = 'left', RIGHT = 'right';
 
   // A crossing point on a diamond diagram is uniquely identified by the number
   // of steps left and right from a common starting point
