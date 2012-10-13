@@ -94,11 +94,24 @@ ot.TextOperation = (function () {
     }
     if (str === '') { return this; }
     this.targetLength += str.length;
-    if (isInsert(this.ops[this.ops.length-1])) {
+    var ops = this.ops;
+    if (isInsert(ops[ops.length-1])) {
       // Merge insert op.
-      this.ops[this.ops.length-1] += str;
+      ops[ops.length-1] += str;
+    } else if (isDelete(ops[ops.length-1])) {
+      // It doesn't matter when an operation is applied whether the operation
+      // is delete(3), insert("something") or insert("something"), delete(3).
+      // Here we enforce that in this case, the insert op always comes first.
+      // This makes all operations that have the same effect when applied to
+      // a document of the right length equal in respect to the `equals` method.
+      if (isInsert(ops[ops.length-2])) {
+        ops[ops.length-2] += str;
+      } else {
+        ops[ops.length] = ops[ops.length-1];
+        ops[ops.length-2] = str;
+      }
     } else {
-      this.ops.push(str);
+      ops.push(str);
     }
     return this;
   };
@@ -118,6 +131,11 @@ ot.TextOperation = (function () {
       this.ops.push(n);
     }
     return this;
+  };
+
+  // Tests whether this operation has no effect.
+  TextOperation.prototype.isNoop = function () {
+    return this.ops.length === 0 || (this.ops.length === 1 && isRetain(this.ops[0]));
   };
 
   // Pretty printing.
@@ -331,6 +349,53 @@ ot.TextOperation = (function () {
     return operation;
   };
 
+  // When you use ctrl-z to undo your latest changes, you expect the program not
+  // to undo every single keystroke but to undo your last sentence you wrote at
+  // a stretch or the deletion you did by holding the backspace key down. This
+  // This can be implemented by composing operations on the undo stack. This
+  // method can help decide whether two operations should be composed. It
+  // returns true if the operations are consecutive insert operations or both
+  // operations delete text at the same position. You may want to include other
+  // factors like the time since the last change in your decision.
+  TextOperation.prototype.shouldBeComposedWith = function (other) {
+    function getSimpleOp (operation, fn) {
+      var ops = operation.ops;
+      var isRetain = TextOperation.isRetain;
+      switch (ops.length) {
+      case 1:
+        return ops[0];
+      case 2:
+        return isRetain(ops[0]) ? ops[1] : (isRetain(ops[1]) ? ops[0] : null);
+      case 3:
+        if (isRetain(ops[0]) && isRetain(ops[2])) { return ops[1]; }
+      }
+      return null;
+    }
+
+    function getStartIndex (operation) {
+      if (isRetain(operation.ops[0])) { return operation.ops[0]; }
+      return 0;
+    }
+
+    if (this.isNoop() || other.isNoop()) { return true; }
+
+    var startA = getStartIndex(this), startB = getStartIndex(other);
+    var simpleA = getSimpleOp(this), simpleB = getSimpleOp(other);
+    if (!simpleA || !simpleB) { return false; }
+
+    if (isInsert(simpleA) && isInsert(simpleB)) {
+      return startA + simpleA.length === startB;
+    }
+
+    if (isDelete(simpleA) && isDelete(simpleB)) {
+      // there are two possibilities to delete: with backspace and with the
+      // delete key.
+      return (startB - simpleB === startA) || startA === startB;
+    }
+
+    return false;
+  };
+
   // Transform takes two operations A and B that happened concurrently and
   // produces two operations A' and B' (in an arry) such that
   // apply(apply(S, A), B') = apply(apply(S, B), A'). This function is the heart
@@ -378,7 +443,7 @@ ot.TextOperation = (function () {
         throw new Error("Cannot compose operations: first operation is too short.");
       }
       if (typeof op2 === 'undefined') {
-        throw new Error("Cannot compose operations: fist operation is too long.");
+        throw new Error("Cannot compose operations: first operation is too long.");
       }
 
       var minl;
@@ -465,6 +530,73 @@ if (typeof ot === 'undefined') {
   var ot = {};
 }
 
+ot.Cursor = (function (global) {
+
+  var TextOperation = global.ot ? global.ot.TextOperation : require('./text-operation');
+
+  // A cursor has a `position` and a `selectionEnd`. Both are zero-based indexes
+  // into the document. When nothing is selected, `selectionEnd` is equal to
+  // `position`. When there is a selection, `position` is always the side of the
+  // selection that would move if you pressed an arrow key.
+  function Cursor (position, selectionEnd) {
+    this.position = position;
+    this.selectionEnd = selectionEnd;
+  }
+
+  Cursor.fromJSON = function (obj) {
+    return new Cursor(obj.position, obj.selectionEnd);
+  };
+
+  Cursor.prototype.equals = function (other) {
+    return this.position === other.position &&
+      this.selectionEnd === other.selectionEnd;
+  };
+
+  // Return the more current cursor information.
+  Cursor.prototype.compose = function (other) {
+    return other;
+  };
+
+  // Update the cursor with respect to an operation.
+  Cursor.prototype.transform = function (other) {
+    function transformIndex (index) {
+      var newIndex = index;
+      var ops = other.ops;
+      for (var i = 0, l = other.ops.length; i < l; i++) {
+        if (TextOperation.isRetain(ops[i])) {
+          index -= ops[i];
+        } else if (TextOperation.isInsert(ops[i])) {
+          newIndex += ops[i].length;
+        } else {
+          newIndex -= Math.min(index, -ops[i]);
+          index += ops[i];
+        }
+        if (index < 0) { break; }
+      }
+      return newIndex;
+    }
+
+    var newPosition = transformIndex(this.position);
+    if (this.position === this.selectionEnd) {
+      return new Cursor(newPosition, newPosition);
+    }
+    return new Cursor(newPosition, transformIndex(this.selectionEnd));
+  };
+
+  return Cursor;
+
+}(this));
+
+// Export for CommonJS
+if (typeof module === 'object') {
+  module.exports = ot.Cursor;
+}
+
+if (typeof ot === 'undefined') {
+  // Export for browsers
+  var ot = {};
+}
+
 ot.WrappedOperation = (function (global) {
 
   // A WrappedOperation contains an operation and corresponing metadata.
@@ -478,8 +610,12 @@ ot.WrappedOperation = (function (global) {
   };
 
   WrappedOperation.prototype.invert = function () {
-    var inverted = this.wrapped.invert.apply(this.wrapped, arguments);
-    return new WrappedOperation(inverted, this.meta);
+    var meta = this.meta;
+    return new WrappedOperation(
+      this.wrapped.invert.apply(this.wrapped, arguments),
+      typeof meta === 'object' && typeof meta.invert === 'function' ?
+        meta.invert.apply(meta, arguments) : meta
+    );
   };
 
   // Copy all properties from source to target.
@@ -491,19 +627,39 @@ ot.WrappedOperation = (function (global) {
     }
   }
 
+  function composeMeta (a, b) {
+    if (typeof a === 'object') {
+      if (typeof a.compose === 'function') { return a.compose(b); }
+      var meta = {};
+      copy(a, meta);
+      copy(b, meta);
+      return meta;
+    }
+    return b;
+  }
+
   WrappedOperation.prototype.compose = function (other) {
-    var meta = {};
-    copy(this.meta, meta);
-    copy(other.meta, meta);
-    return new WrappedOperation(this.wrapped.compose(other.wrapped), meta);
+    return new WrappedOperation(
+      this.wrapped.compose(other.wrapped),
+      composeMeta(this.meta, other.meta)
+    );
   };
+
+  function transformMeta (meta, operation) {
+    if (typeof meta === 'object') {
+      if (typeof meta.transform === 'function') {
+        return meta.transform(operation);
+      }
+    }
+    return meta;
+  }
 
   WrappedOperation.transform = function (a, b) {
     var transform = a.wrapped.constructor.transform;
     var pair = transform(a.wrapped, b.wrapped);
     return [
-      new WrappedOperation(pair[0], a.meta),
-      new WrappedOperation(pair[1], b.meta)
+      new WrappedOperation(pair[0], transformMeta(a.meta, b.wrapped)),
+      new WrappedOperation(pair[1], transformMeta(b.meta, a.wrapped))
     ];
   };
 
@@ -515,6 +671,117 @@ ot.WrappedOperation = (function (global) {
 if (typeof module === 'object') {
   module.exports = ot.WrappedOperation;
 }
+if (typeof ot === 'undefined') {
+  // Export for browsers
+  var ot = {};
+}
+
+ot.UndoManager = (function () {
+
+  var NORMAL_STATE = 'normal';
+  var UNDOING_STATE = 'undoing';
+  var REDOING_STATE = 'redoing';
+
+  // Create a new UndoManager with an optional maximum history size.
+  function UndoManager (maxItems) {
+    this.maxItems  = maxItems || 50;
+    this.state = NORMAL_STATE;
+    this.dontCompose = false;
+    this.undoStack = [];
+    this.redoStack = [];
+  }
+
+  // Add an operation to the undo or redo stack, depending on the current state
+  // of the UndoManager. The operation added must be the inverse of the last
+  // edit. When `compose` is true, compose the operation with the last operation
+  // unless the last operation was alread pushed on the redo stack or was hidden
+  // by a newer operation on the undo stack.
+  UndoManager.prototype.add = function (operation, compose) {
+    if (this.state === UNDOING_STATE) {
+      this.redoStack.push(operation);
+      this.dontCompose = true;
+    } else if (this.state === REDOING_STATE) {
+      this.undoStack.push(operation);
+      this.dontCompose = true;
+    } else {
+      var undoStack = this.undoStack;
+      if (!this.dontCompose && compose && undoStack.length > 0) {
+        undoStack.push(operation.compose(undoStack.pop()));
+      } else {
+        undoStack.push(operation);
+        if (undoStack.length > this.maxItems) { undoStack.shift(); }
+      }
+      this.dontCompose = false;
+      this.redoStack = [];
+    }
+  };
+
+  function transformStack (stack, operation) {
+    var newStack = [];
+    var Operation = operation.constructor;
+    for (var i = stack.length - 1; i >= 0; i--) {
+      var pair = Operation.transform(stack[i], operation);
+      if (typeof pair[0].isNoop !== 'function' || !pair[0].isNoop()) {
+        newStack.push(pair[0]);
+      }
+      operation = pair[1];
+    }
+    return newStack.reverse();
+  }
+
+  // Transform the undo and redo stacks against a operation by another client.
+  UndoManager.prototype.transform = function (operation) {
+    this.undoStack = transformStack(this.undoStack, operation);
+    this.redoStack = transformStack(this.redoStack, operation);
+  };
+
+  // Perform an undo by calling a function with the latest operation on the undo
+  // stack. The function is expected to call the `add` method with the inverse
+  // of the operation, which pushes the inverse on the redo stack.
+  UndoManager.prototype.performUndo = function (fn) {
+    this.state = UNDOING_STATE;
+    if (this.undoStack.length === 0) { throw new Error("undo not possible"); }
+    fn(this.undoStack.pop());
+    this.state = NORMAL_STATE;
+  };
+
+  // The inverse of `performUndo`.
+  UndoManager.prototype.performRedo = function (fn) {
+    this.state = REDOING_STATE;
+    if (this.redoStack.length === 0) { throw new Error("redo not possible"); }
+    fn(this.redoStack.pop());
+    this.state = NORMAL_STATE;
+  };
+
+  // Is the undo stack not empty?
+  UndoManager.prototype.canUndo = function () {
+    return this.undoStack.length !== 0;
+  };
+
+  // Is the redo stack not empty?
+  UndoManager.prototype.canRedo = function () {
+    return this.redoStack.length !== 0;
+  };
+
+  // Whether the UndoManager is currently performing an undo.
+  UndoManager.prototype.isUndoing = function () {
+    return this.state === UNDOING_STATE;
+  };
+
+  // Whether the UndoManager is currently performing a redo.
+  UndoManager.prototype.isRedoing = function () {
+    return this.state === REDOING_STATE;
+  };
+
+  return UndoManager;
+
+}());
+
+// Export for CommonJS
+if (typeof module === 'object') {
+  module.exports = ot.UndoManager;
+}
+
 // translation of https://github.com/djspiewak/cccp/blob/master/agent/src/main/scala/com/codecommit/cccp/agent/state.scala
 
 if (typeof ot === 'undefined') {
@@ -815,67 +1082,48 @@ if (typeof module === 'object') {
 
 ot.CodeMirrorClient = (function () {
   var Client = ot.Client;
+  var Cursor = ot.Cursor;
+  var UndoManager = ot.UndoManager;
   var TextOperation = ot.TextOperation;
   var WrappedOperation = ot.WrappedOperation;
 
-  function CodeMirrorClient (socket, cm) {
-    this.socket = socket;
-    this.cm = cm;
-    this.fromServer = false;
-    this.unredo = false;
-    this.undoStack = [];
-    this.redoStack = [];
-    this.clients = {};
-    this.initializeClientList();
 
-    var self = this;
-    socket.on('doc', function (obj) {
-      Client.call(self, obj.revision);
-      self.initializeCodeMirror(obj.str);
-      self.initializeSocket();
-      self.initializeClients(obj.clients);
-    });
+  function SelfMeta (cursorBefore, cursorAfter) {
+    this.cursorBefore = cursorBefore;
+    this.cursorAfter  = cursorAfter;
   }
 
-  inherit(CodeMirrorClient, Client);
-
-  CodeMirrorClient.prototype.applyClient = function (operation) {
-    operation.meta.cursor = this.cursor;
-    operation.meta.selectionEnd = this.selectionEnd;
-    clearTimeout(this.sendCursorTimeout);
-    Client.prototype.applyClient.call(this, operation);
+  SelfMeta.prototype.invert = function () {
+    return new SelfMeta(this.cursorAfter, this.cursorBefore);
   };
 
-  CodeMirrorClient.prototype.applyServer = function (operation) {
-    Client.prototype.applyServer.call(this, operation);
+  SelfMeta.prototype.compose = function (other) {
+    return new SelfMeta(this.cursorBefore, other.cursorAfter);
   };
 
-  CodeMirrorClient.prototype.initializeSocket = function () {
-    var self = this;
-
-    this.socket
-      .on('client_left', function (obj) {
-        self.onClientLeft(obj.clientId);
-      })
-      .on('set_name', function (obj) {
-        var client = self.getClientObject(obj.clientId);
-        client.setName(obj.name);
-      })
-      .on('ack', function () { self.serverAck(); })
-      .on('operation', function (obj) {
-        var operation = new WrappedOperation(TextOperation.fromJSON(obj.operation), obj.meta);
-        console.log("Operation from server by client " + obj.meta.clientId + ":", operation);
-        self.applyServer(operation);
-      })
-      .on('cursor', function (obj) {
-        var client = self.getClientObject(obj.clientId);
-        client.updateCursor(obj.cursor, obj.selectionEnd);
-      });
+  SelfMeta.prototype.transform = function (operation) {
+    return new SelfMeta(
+      this.cursorBefore.transform(operation),
+      this.cursorAfter.transform(operation)
+    );
   };
 
 
+  function OtherMeta (clientId, cursor) {
+    this.clientId = clientId;
+    this.cursor   = cursor;
+  }
 
-  function OtherClient (id, listEl, cm, name, cursor, selectionEnd) {
+  OtherMeta.fromJSON = function (obj) {
+    return new OtherMeta(obj.clientId, Cursor.fromJSON(obj.cursor));
+  };
+
+  OtherMeta.prototype.transform = function (operation) {
+    return new OtherMeta(this.clientId, this.cursor.transform(operation));
+  };
+
+
+  function OtherClient (id, listEl, cm, name, cursor) {
     this.id = id;
     this.listEl = listEl;
     this.cm = cm;
@@ -895,7 +1143,7 @@ ot.CodeMirrorClient = (function () {
     this.cursorEl.innerHTML = '&nbsp;';
 
     if (typeof cursor === 'number' && typeof selectionEnd === 'number') {
-      this.updateCursor(cursor, selectionEnd);
+      this.updateCursor(cursor);
     }
     this.setColor(name ? hueFromName(name) : Math.random());
   }
@@ -925,9 +1173,8 @@ ot.CodeMirrorClient = (function () {
     this.setColor(hueFromName(name));
   };
 
-  OtherClient.prototype.updateCursor = function (cursor, selectionEnd) {
+  OtherClient.prototype.updateCursor = function (cursor) {
     this.cursor = cursor;
-    this.selectionEnd = selectionEnd;
 
     removeElement(this.cursorEl);
     if (this.mark) {
@@ -935,8 +1182,8 @@ ot.CodeMirrorClient = (function () {
       delete this.mark;
     }
 
-    var cursorPos = this.cm.posFromIndex(cursor);
-    if (cursor === selectionEnd) {
+    var cursorPos = this.cm.posFromIndex(cursor.position);
+    if (cursor.position === cursor.selectionEnd) {
       // show cursor
       var cursorCoords = this.cm.cursorCoords(cursorPos);
       this.cursorEl.style.height = (cursorCoords.bottom - cursorCoords.top) * 0.85 + 'px';
@@ -944,11 +1191,11 @@ ot.CodeMirrorClient = (function () {
     } else {
       // show selection
       var fromPos, toPos;
-      if (selectionEnd > cursor) {
+      if (cursor.selectionEnd > cursor.position) {
         fromPos = cursorPos;
-        toPos = this.cm.posFromIndex(selectionEnd);
+        toPos = this.cm.posFromIndex(cursor.selectionEnd);
       } else {
-        fromPos = this.cm.posFromIndex(selectionEnd);
+        fromPos = this.cm.posFromIndex(cursor.selectionEnd);
         toPos = cursorPos;
       }
       this.mark = this.cm.markText(fromPos, toPos, this.selectionClassName);
@@ -962,6 +1209,78 @@ ot.CodeMirrorClient = (function () {
   };
 
 
+  function CodeMirrorClient (socket, cm) {
+    this.socket = socket;
+    this.cm = cm;
+    this.fromServer = false;
+    this.unredo = false;
+    this.undoManager = new UndoManager();
+    this.clients = {};
+    this.initializeClientList();
+
+    var self = this;
+    socket.on('doc', function (obj) {
+      Client.call(self, obj.revision);
+      self.initializeCodeMirror(obj.str);
+      self.initializeSocket();
+      self.initializeClients(obj.clients);
+    });
+  }
+
+  inherit(CodeMirrorClient, Client);
+
+  CodeMirrorClient.prototype.initializeSocket = function () {
+    var self = this;
+
+    this.socket
+      .on('client_left', function (obj) {
+        self.onClientLeft(obj.clientId);
+      })
+      .on('set_name', function (obj) {
+        var client = self.getClientObject(obj.clientId);
+        client.setName(obj.name);
+      })
+      .on('ack', function () { self.serverAck(); })
+      .on('operation', function (obj) {
+        var operation = new WrappedOperation(
+          TextOperation.fromJSON(obj.operation),
+          OtherMeta.fromJSON(obj.meta)
+        );
+        console.log("Operation from server by client " + obj.meta.clientId + ":", operation);
+        self.applyServer(operation);
+      })
+      .on('cursor', function (obj) {
+        var client = self.getClientObject(obj.clientId);
+        client.updateCursor(Cursor.fromJSON(obj.cursor));
+      });
+  };
+
+  CodeMirrorClient.prototype.initializeCodeMirror = function (str) {
+    var cm = this.cm;
+    var self = this;
+
+    cm.setValue(str);
+    this.oldValue = str;
+
+    cm.on('change', function (_, change) { self.onCodeMirrorChange(change); });
+    cm.on('cursorActivity', function () { self.onCodeMirrorCursorActivity(); });
+
+    cm.undo = function () { self.undo(); };
+    cm.redo = function () { self.redo(); };
+  };
+
+  CodeMirrorClient.prototype.initializeClients = function (clients) {
+    for (var clientId in clients) {
+      if (clients.hasOwnProperty(clientId)) {
+        var client = clients[clientId];
+        client.clientId = clientId;
+        this.clients[clientId] = new OtherClient(
+          client.clientId, this.clientListEl, this.cm,
+          client.name, Cursor.fromJSON(client.cursor)
+        );
+      }
+    }
+  };
 
   CodeMirrorClient.prototype.getClientObject = function (clientId) {
     var client = this.clients[clientId];
@@ -977,212 +1296,92 @@ ot.CodeMirrorClient = (function () {
     delete this.clients[clientId];
   };
 
-  CodeMirrorClient.prototype.initializeCodeMirror = function (str) {
-    var cm = this.cm;
-    var self = this;
-
-    cm.setValue(str);
-    this.oldValue = str;
-
-    cm.on('change', function (_, change) {
-      self.onCodeMirrorChange(change);
-    });
-
-    cm.on('cursorActivity', function (_) {
-      self.onCodeMirrorCursorActivity();
-    });
-
-    cm.undo = function () { self.undo(); };
-    cm.redo = function () { self.redo(); };
-  };
-
-  CodeMirrorClient.prototype.initializeClients = function (clients) {
-    for (var clientId in clients) {
-      if (clients.hasOwnProperty(clientId)) {
-        var client = clients[clientId];
-        client.clientId = clientId;
-        this.clients[clientId] = new OtherClient(
-          client.clientId, this.clientListEl, this.cm,
-          client.name, client.cursor, client.selectionEnd
-        );
-      }
-    }
-  };
-
   CodeMirrorClient.prototype.initializeClientList = function () {
     this.clientListEl = document.createElement('ul');
   };
 
-  function cleanNoops (stack) {
-    function isNoop (operation) {
-      var ops = operation.ops;
-      return ops.length === 0 || (ops.length === 1 && TextOperation.isRetain(ops[0]));
-    }
-
-    while (stack.length > 0) {
-      var operation = stack[stack.length - 1];
-      if (isNoop(operation)) {
-        stack.pop();
-      } else {
-        break;
-      }
-    }
-  }
-
-  var UNDO_DEPTH = 20;
-
-  function cursorIndexAfterOperation (operation) {
-    var ops = operation.ops;
-    if (TextOperation.isRetain(ops[0])) {
-      var index = ops[0];
-      if (TextOperation.isInsert(ops[1])) {
-        return index + ops[1].length;
-      } else {
-        return index;
-      }
-    } else if (TextOperation.isInsert(ops[0])) {
-      return ops[0].length;
-    } else {
-      return 0;
-    }
-  }
-
-  CodeMirrorClient.prototype.unredoHelper = function (sourceStack, targetStack) {
-    cleanNoops(sourceStack);
-    if (sourceStack.length === 0) { return; }
-    var operation = sourceStack.pop();
-    targetStack.push(operation.invert(this.oldValue));
+  CodeMirrorClient.prototype.applyUnredo = function (operation) {
     this.unredo = true;
-    operation.applyToCodeMirror(this.cm);
-    this.cursor = this.selectionEnd = cursorIndexAfterOperation(operation);
-    this.cm.setCursor(this.cm.posFromIndex(this.cursor));
-    this.applyClient(new WrappedOperation(operation));
-  };
-
-  CodeMirrorClient.prototype.transformUnredoStack = function (stack, operation) {
-    cleanNoops(stack);
-    for (var i = stack.length - 1; i >= 0; i--) {
-      var transformedPair = TextOperation.transform(stack[i], operation);
-      stack[i]  = transformedPair[0];
-      operation = transformedPair[1];
-    }
-  };
-
-  CodeMirrorClient.prototype.addOperationToUndo = function (operation) {
-    function isSimpleOperation (operation, fn) {
-      var ops = operation.ops;
-      var isRetain = TextOperation.isRetain;
-      switch (ops.length) {
-        case 0: return true;
-        case 1: return !!fn(ops[0]);
-        case 2: return (isRetain(ops[0]) && fn(ops[1])) || (fn(ops[0]) && isRetain(ops[1]));
-        case 3: return isRetain(ops[0]) && fn(ops[1]) && isRetain(ops[2]);
-        default: return false;
-      }
-    }
-
-    function isSimpleInsert (operation) {
-      return isSimpleOperation(operation, TextOperation.isInsert);
-    }
-
-    function isSimpleDelete (operation) {
-      return isSimpleOperation(operation, TextOperation.isDelete);
-    }
-
-    function shouldBeComposed (a, b) {
-      if (isSimpleInsert(a) && isSimpleInsert(b)) {
-        return isSimpleInsert(a.compose(b));
-      } else if (isSimpleDelete(a) && isSimpleDelete(b)) {
-        var opA = a.ops[0], opsB = b.ops;
-        if (!TextOperation.isRetain(opA)) { return false; }
-        if (TextOperation.isDelete(opsB[0])) {
-          return opA === -opsB[0];
-        } else {
-          return opA === opsB[0] - opsB[1];
-        }
-      }
-      return false;
-    }
-
-    if (this.undoStack.length === 0) {
-      this.undoStack.push(operation);
-    } else {
-      var lastOperation = this.undoStack[this.undoStack.length - 1];
-      if (shouldBeComposed(operation, lastOperation)) {
-        var composed = operation.compose(lastOperation);
-        this.undoStack[this.undoStack.length - 1] = composed;
-      } else {
-        this.undoStack.push(operation);
-        if (this.undoStack.length > UNDO_DEPTH) {
-          this.undoStack.shift();
-        }
-      }
-    }
-    if (this.redoStack.length > 0) { this.redoStack = []; }
+    this.undoManager.add(operation.invert(this.oldValue));
+    operation.wrapped.applyToCodeMirror(this.cm);
+    this.cursor = operation.meta.cursorAfter;
+    this.cm.setSelection(
+      this.cm.posFromIndex(this.cursor.position),
+      this.cm.posFromIndex(this.cursor.selectionEnd)
+    );
+    this.applyClient(operation);
   };
 
   CodeMirrorClient.prototype.undo = function () {
-    this.unredoHelper(this.undoStack, this.redoStack);
+    var self = this;
+    this.undoManager.performUndo(function (o) { self.applyUnredo(o); });
   };
 
   CodeMirrorClient.prototype.redo = function () {
-    this.unredoHelper(this.redoStack, this.undoStack);
+    var self = this;
+    this.undoManager.performRedo(function (o) { self.applyUnredo(o); });
   };
 
   CodeMirrorClient.prototype.onCodeMirrorChange = function (change) {
     var cm = this.cm;
+    var oldValue = this.oldValue;
+    this.oldValue = cm.getValue();
+    var cursorBefore = this.cursor;
+    this.updateCursor();
     try {
       if (!this.fromServer && !this.unredo) {
-        var operation = TextOperation.fromCodeMirrorChange(change, this.oldValue);
-        this.addOperationToUndo(operation.invert(this.oldValue));
-        this.applyClient(new WrappedOperation(operation, {}));
+        var textOperation = TextOperation.fromCodeMirrorChange(change, oldValue);
+        var meta = new SelfMeta(cursorBefore, this.cursor);
+        var operation = new WrappedOperation(textOperation, meta);
+        var compose = this.undoManager.undoStack.length > 0 &&
+          !this.undoManager.dontCompose &&
+          last(this.undoManager.undoStack).wrapped
+            .invert(oldValue)
+            .shouldBeComposedWith(textOperation);
+        this.undoManager.add(operation.invert(oldValue), compose);
+        this.applyClient(operation);
       }
     } finally {
       this.fromServer = false;
       this.unredo     = false;
-      this.oldValue = cm.getValue();
     }
   };
 
-  CodeMirrorClient.prototype.onCodeMirrorCursorActivity = function () {
-    var cm = this.cm;
-    function eqPos (a, b) {
-      return a.line === b.line && a.ch === b.ch;
-    }
+  CodeMirrorClient.prototype.updateCursor = function () {
+    function eqPos (a, b) { return a.line === b.line && a.ch === b.ch; }
 
+    var cm = this.cm;
     var cursorPos = cm.getCursor();
-    var cursor = cm.indexFromPos(cursorPos);
+    var position = cm.indexFromPos(cursorPos);
     var selectionEnd;
     if (cm.somethingSelected()) {
       var startPos = cm.getCursor(true);
       var selectionEndPos = eqPos(cursorPos, startPos) ? cm.getCursor(false) : startPos;
       selectionEnd = cm.indexFromPos(selectionEndPos);
     } else {
-      selectionEnd = cursor;
+      selectionEnd = position;
     }
 
-    this.cursor = cursor;
-    this.selectionEnd = selectionEnd;
+    this.cursor = new Cursor(position, selectionEnd);
+  };
 
-    if (this.state === 'awaitingWithBuffer') {
-      this.buffer.meta.cursor = cursor;
-      this.buffer.meta.selectionEnd = selectionEnd;
+  CodeMirrorClient.prototype.onCodeMirrorCursorActivity = function () {
+    var oldCursor = this.cursor;
+    this.updateCursor();
+    if (oldCursor && this.cursor.equals(oldCursor)) { return; }
+
+    if (this.state instanceof Client.AwaitingWithBuffer) {
+      this.state.buffer.meta.cursorAfter = this.cursor;
     } else {
       var self = this;
-      clearTimeout(this.sendCursorTimeout);
-      this.sendCursorTimeout = setTimeout(function () {
-        self.socket.emit('cursor', {
-          cursor: cursor,
-          selectionEnd: selectionEnd
-        });
-      }, 50);
+      this.socket.emit('cursor', this.cursor);
     }
   };
 
   CodeMirrorClient.prototype.sendOperation = function (revision, operation) {
     this.socket.emit('operation', {
       revision: revision,
-      meta: operation.meta,
+      meta: { cursor: operation.meta.cursorAfter },
       operation: operation.wrapped.toJSON()
     });
   };
@@ -1190,13 +1389,9 @@ ot.CodeMirrorClient = (function () {
   CodeMirrorClient.prototype.applyOperation = function (operation) {
     this.fromServer = true;
     operation.wrapped.applyToCodeMirror(this.cm);
-
-    var meta = operation.meta;
-    var client = this.getClientObject(meta.clientId);
-    client.updateCursor(meta.cursor, meta.selectionEnd);
-
-    this.transformUnredoStack(this.undoStack, operation.wrapped);
-    this.transformUnredoStack(this.redoStack, operation.wrapped);
+    var client = this.getClientObject(operation.meta.clientId);
+    client.updateCursor(operation.meta.cursor);
+    this.undoManager.transform(operation);
   };
 
   function randomInt (n) {
@@ -1241,6 +1436,8 @@ ot.CodeMirrorClient = (function () {
     Const.prototype = new F();
     Const.prototype.constructor = Const;
   }
+
+  function last (arr) { return arr[arr.length - 1]; }
 
   // Remove an element from the DOM.
   function removeElement (el) {

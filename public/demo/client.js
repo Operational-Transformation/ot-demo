@@ -80,12 +80,8 @@
   });
   cm.on('change', function () {
     if (!cmClient) { return; }
-    function enableConditionally (stack, el) {
-      if (stack.length === 0) { disable(el); }
-      else                    { enable(el); }
-    }
-    enableConditionally(cmClient.undoStack, undoBtn);
-    enableConditionally(cmClient.redoStack, redoBtn);
+    (cmClient.undoManager.canUndo() ? enable : disable)(undoBtn);
+    (cmClient.undoManager.canRedo() ? enable : disable)(redoBtn);
   });
 
   var undoBtn = document.getElementById('undo-btn');
