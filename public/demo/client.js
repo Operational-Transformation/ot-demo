@@ -76,7 +76,8 @@
   var cm = window.cm = CodeMirror(editorWrapper, {
     lineNumbers: true,
     lineWrapping: true,
-    mode: 'markdown'
+    mode: 'markdown',
+    readOnly: 'nocursor'
   });
   cm.on('change', function () {
     if (!cmClient) { return; }
@@ -114,6 +115,7 @@
         enable(italicBtn);
         enable(codeBtn);
 
+        cm.setOption('readOnly', false);
         removeElement(overlay);
         removeElement(loginForm);
       });
@@ -124,7 +126,7 @@
   overlay.onclick = stopPropagation;
   overlay.onmousedown = stopPropagation;
   overlay.onmouseup = stopPropagation;
-  var cmWrapper = cm.getScrollerElement();
+  var cmWrapper = cm.getWrapperElement();
   cmWrapper.appendChild(overlay);
 
   var userListWrapper = document.getElementById('userlist-wrapper');
