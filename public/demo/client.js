@@ -1,5 +1,7 @@
 (function () {
-  var CodeMirrorClient = ot.CodeMirrorClient;
+  var EditorClient = ot.EditorClient;
+  var SocketIOAdapter = ot.SocketIOAdapter;
+  var CodeMirrorAdapter = ot.CodeMirrorAdapter;
 
   var socket = io.connect('/');
 
@@ -129,7 +131,16 @@
   var cmWrapper = cm.getWrapperElement();
   cmWrapper.appendChild(overlay);
 
-  var userListWrapper = document.getElementById('userlist-wrapper');
-  var cmClient = window.cmClient = new CodeMirrorClient(socket, cm);
-  userListWrapper.appendChild(cmClient.clientListEl);
+  var cmClient;
+  socket.on('doc', function (obj) {
+    cm.setValue(obj.str);
+    cmClient = window.cmClient = new EditorClient(
+      obj.revision,
+      obj.clients,
+      new SocketIOAdapter(socket),
+      new CodeMirrorAdapter(cm)
+    );
+    var userListWrapper = document.getElementById('userlist-wrapper');
+    userListWrapper.appendChild(cmClient.clientListEl);
+  });
 })();

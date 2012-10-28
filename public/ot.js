@@ -1,10 +1,10 @@
 /*
  *    /\
- *   /  \ operational-transformation 0.0.7
+ *   /  \ ot 0.0.9
  *  /    \ http://ot.substance.io
  *  \    /
  *   \  / (c) 2012 Tim Baumann <tim@timbaumann.info> (http://timbaumann.info)
- *    \/ operational-transformation may be freely distributed under the MIT license.
+ *    \/ ot may be freely distributed under the MIT license.
  */
 
 if (typeof ot === 'undefined') {
@@ -948,13 +948,22 @@ if (typeof module === 'object') {
 }
 /*global ot */
 
-(function () {
-  // Monkey patching, yay!
-
+ot.CodeMirrorAdapter = (function () {
   var TextOperation = ot.TextOperation;
+  var Cursor = ot.Cursor;
+
+  function CodeMirrorAdapter (cm) {
+    this.cm = cm;
+    this.silent = false;
+    this.oldValue = this.cm.getValue();
+
+    var self = this;
+    cm.on('change', function (_, change) { self.onChange(change); });
+    cm.on('cursorActivity', function () { self.trigger('cursorActivity'); });
+  }
 
   // The oldValue is needed to find
-  TextOperation.fromCodeMirrorChange = function (change, oldValue) {
+  CodeMirrorAdapter.operationFromCodeMirrorChange = function (change, oldValue) {
     var operation = new TextOperation();
     // Holds the current value
     var lines = oldValue.split('\n');
@@ -1047,8 +1056,7 @@ if (typeof module === 'object') {
   };
 
   // Apply an operation to a CodeMirror instance.
-  TextOperation.prototype.applyToCodeMirror = function (cm) {
-    var operation = this;
+  CodeMirrorAdapter.applyOperationToCodeMirror = function (operation, cm) {
     cm.operation(function () {
       var ops = operation.ops;
       var index = 0; // holds the current index into CodeMirror's content
@@ -1070,6 +1078,122 @@ if (typeof module === 'object') {
     });
   };
 
+  CodeMirrorAdapter.prototype.registerCallbacks = function (cb) {
+    this.callbacks = cb;
+  };
+
+  CodeMirrorAdapter.prototype.onChange = function (change) {
+    var operation = CodeMirrorAdapter.operationFromCodeMirrorChange(change, this.oldValue);
+    if (!this.silent) { this.trigger('change', this.oldValue, operation); }
+    this.oldValue = this.cm.getValue();
+  };
+
+  CodeMirrorAdapter.prototype.getValue = function () {
+    return this.oldValue;
+  };
+
+  CodeMirrorAdapter.prototype.getCursor = function () {
+    function eqPos (a, b) { return a.line === b.line && a.ch === b.ch; }
+
+    var cm = this.cm;
+    var cursorPos = cm.getCursor();
+    var position = cm.indexFromPos(cursorPos);
+    var selectionEnd;
+    if (cm.somethingSelected()) {
+      var startPos = cm.getCursor(true);
+      var selectionEndPos = eqPos(cursorPos, startPos) ? cm.getCursor(false) : startPos;
+      selectionEnd = cm.indexFromPos(selectionEndPos);
+    } else {
+      selectionEnd = position;
+    }
+
+    return new Cursor(position, selectionEnd);
+  };
+
+  CodeMirrorAdapter.prototype.setCursor = function (cursor) {
+    this.cm.setSelection(
+      this.cm.posFromIndex(cursor.position),
+      this.cm.posFromIndex(cursor.selectionEnd)
+    );
+  };
+
+  var addStyleRule = (function () {
+    var added = {};
+
+    return function (css) {
+      if (added[css]) { return; }
+      added[css] = true;
+
+      try {
+        var styleSheet = document.styleSheets.item(0),
+            insertionPoint = (styleSheet.rules? styleSheet.rules:
+                styleSheet.cssRules).length;
+        styleSheet.insertRule(css, insertionPoint);
+      } catch (exc) {
+        console.error("Couldn't add style rule.", exc);
+      }
+    };
+  }());
+
+  CodeMirrorAdapter.prototype.setOtherCursor = function (cursor, color) {
+    var cursorPos = this.cm.posFromIndex(cursor.position);
+    if (cursor.position === cursor.selectionEnd) {
+      // show cursor
+      var cursorCoords = this.cm.cursorCoords(cursorPos);
+      var cursorEl = document.createElement('pre');
+      cursorEl.className = 'other-client';
+      cursorEl.style.borderLeftWidth = '2px';
+      cursorEl.style.borderLeftStyle = 'solid';
+      cursorEl.innerHTML = '&nbsp;';
+      cursorEl.style.borderLeftColor = color;
+      cursorEl.style.height = (cursorCoords.bottom - cursorCoords.top) * 0.85 + 'px';
+      this.cm.addWidget(cursorPos, cursorEl, false);
+      return {
+        clear: function () {
+          var parent = cursorEl.parentNode;
+          if (parent) { parent.removeChild(cursorEl); }
+        }
+      };
+    } else {
+      // show selection
+      var match = /^#([0-9a-fA-F]{6})$/.exec(color);
+      if (!match) { throw new Error("only six-digit hex colors are allowed."); }
+      var selectionClassName = 'selection-' + match[1];
+      var rule = '.' + selectionClassName + ' { background: ' + color + '; }';
+      addStyleRule(rule);
+
+      var fromPos, toPos;
+      if (cursor.selectionEnd > cursor.position) {
+        fromPos = cursorPos;
+        toPos = this.cm.posFromIndex(cursor.selectionEnd);
+      } else {
+        fromPos = this.cm.posFromIndex(cursor.selectionEnd);
+        toPos = cursorPos;
+      }
+      return this.cm.markText(fromPos, toPos, selectionClassName);
+    }
+  };
+
+  CodeMirrorAdapter.prototype.trigger = function (event) {
+    var args = Array.prototype.slice.call(arguments, 1);
+    var action = this.callbacks && this.callbacks[event];
+    if (action) { action.apply(this, args); }
+  };
+
+  CodeMirrorAdapter.prototype.applyOperation = function (operation) {
+    this.silent = true;
+    CodeMirrorAdapter.applyOperationToCodeMirror(operation, this.cm);
+    this.silent = false;
+  };
+
+  CodeMirrorAdapter.prototype.registerUndo = function (undoFn) {
+    this.cm.undo = undoFn;
+  };
+
+  CodeMirrorAdapter.prototype.registerRedo = function (redoFn) {
+    this.cm.redo = redoFn;
+  };
+
   // Throws an error if the first argument is falsy. Useful for debugging.
   function assert (b, msg) {
     if (!b) {
@@ -1077,10 +1201,56 @@ if (typeof module === 'object') {
     }
   }
 
+  return CodeMirrorAdapter;
+
 }());
 /*global ot */
 
-ot.CodeMirrorClient = (function () {
+ot.SocketIOAdapter = (function () {
+
+  function SocketIOAdapter (socket) {
+    this.socket = socket;
+
+    var self = this;
+    socket
+      .on('client_left', function (obj) {
+        self.trigger('client_left', obj.clientId);
+      })
+      .on('set_name', function (obj) {
+        self.trigger('set_name', obj.clientId, obj.name);
+      })
+      .on('ack', function () { self.trigger('ack'); })
+      .on('operation', function (obj) { self.trigger('operation', obj); })
+      .on('cursor', function (obj) {
+        self.trigger('cursor', obj.clientId, obj.cursor);
+      });
+  }
+
+  SocketIOAdapter.prototype.sendOperation = function (revision, obj) {
+    obj.revision = revision;
+    this.socket.emit('operation', obj);
+  };
+
+  SocketIOAdapter.prototype.sendCursor = function (obj) {
+    this.socket.emit('cursor', obj);
+  };
+
+  SocketIOAdapter.prototype.registerCallbacks = function (cb) {
+    this.callbacks = cb;
+  };
+
+  SocketIOAdapter.prototype.trigger = function (event) {
+    var args = Array.prototype.slice.call(arguments, 1);
+    var action = this.callbacks && this.callbacks[event];
+    if (action) { action.apply(this, args); }
+  };
+
+  return SocketIOAdapter;
+
+}());
+/*global ot */
+
+ot.EditorClient = (function () {
   var Client = ot.Client;
   var Cursor = ot.Cursor;
   var UndoManager = ot.UndoManager;
@@ -1123,12 +1293,11 @@ ot.CodeMirrorClient = (function () {
   };
 
 
-  function OtherClient (id, listEl, cm, name, cursor) {
+  function OtherClient (id, listEl, editorAdapter, name, cursor) {
     this.id = id;
     this.listEl = listEl;
-    this.cm = cm;
+    this.editorAdapter = editorAdapter;
     this.name = name;
-    this.selectionClassName = 'client-selection-' + randomInt(1e6);
 
     this.li = document.createElement('li');
     if (name) {
@@ -1136,28 +1305,15 @@ ot.CodeMirrorClient = (function () {
       this.listEl.appendChild(this.li);
     }
 
-    this.cursorEl = document.createElement('pre');
-    this.cursorEl.className = 'other-client';
-    this.cursorEl.style.borderLeftWidth = '2px';
-    this.cursorEl.style.borderLeftStyle = 'solid';
-    this.cursorEl.innerHTML = '&nbsp;';
-
     if (cursor) { this.updateCursor(cursor); }
     this.setColor(name ? hueFromName(name) : Math.random());
   }
 
   OtherClient.prototype.setColor = function (hue) {
     this.hue = hue;
-
-    var color = hsl2hex(hue, 0.75, 0.5);
-    if (this.li) { this.li.style.color = color; }
-    this.cursorEl.style.borderLeftColor = color;
-
-    var lightColor = hsl2hex(hue, 0.5, 0.9);
-    var selector = '.' + this.selectionClassName;
-    var styles = 'background:' + lightColor + ';';
-    var rule = selector + '{' + styles + '}';
-    addStyleRule(rule);
+    this.color = hsl2hex(hue, 0.75, 0.5);
+    this.lightColor = hsl2hex(hue, 0.5, 0.9);
+    if (this.li) { this.li.style.color = this.color; }
   };
 
   OtherClient.prototype.setName = function (name) {
@@ -1173,120 +1329,83 @@ ot.CodeMirrorClient = (function () {
 
   OtherClient.prototype.updateCursor = function (cursor) {
     this.cursor = cursor;
-
-    removeElement(this.cursorEl);
-    if (this.mark) {
-      this.mark.clear();
-      delete this.mark;
-    }
-
-    var cursorPos = this.cm.posFromIndex(cursor.position);
-    if (cursor.position === cursor.selectionEnd) {
-      // show cursor
-      var cursorCoords = this.cm.cursorCoords(cursorPos);
-      this.cursorEl.style.height = (cursorCoords.bottom - cursorCoords.top) * 0.85 + 'px';
-      this.cm.addWidget(cursorPos, this.cursorEl, false);
-    } else {
-      // show selection
-      var fromPos, toPos;
-      if (cursor.selectionEnd > cursor.position) {
-        fromPos = cursorPos;
-        toPos = this.cm.posFromIndex(cursor.selectionEnd);
-      } else {
-        fromPos = this.cm.posFromIndex(cursor.selectionEnd);
-        toPos = cursorPos;
-      }
-      this.mark = this.cm.markText(fromPos, toPos, this.selectionClassName);
-    }
+    if (this.mark) { this.mark.clear(); }
+    this.mark = this.editorAdapter.setOtherCursor(
+      cursor,
+      cursor.position === cursor.selectionEnd ? this.color : this.lightColor
+    );
   };
 
   OtherClient.prototype.remove = function () {
     if (this.li) { removeElement(this.li); }
-    if (this.cursorEl) { removeElement(this.cursorEl); }
     if (this.mark) { this.mark.clear(); }
   };
 
 
-  function CodeMirrorClient (socket, cm) {
-    this.socket = socket;
-    this.cm = cm;
-    this.fromServer = false;
-    this.unredo = false;
+  function EditorClient (revision, clients, serverAdapter, editorAdapter) {
+    Client.call(this, revision);
+    this.serverAdapter = serverAdapter;
+    this.editorAdapter = editorAdapter;
     this.undoManager = new UndoManager();
-    this.clients = {};
+
     this.initializeClientList();
+    this.initializeClients(clients);
 
     var self = this;
-    socket.on('doc', function (obj) {
-      Client.call(self, obj.revision);
-      self.initializeCodeMirror(obj.str);
-      self.initializeSocket();
-      self.initializeClients(obj.clients);
+
+    this.editorAdapter.registerCallbacks({
+      change: function (oldValue, operation) { self.onChange(oldValue, operation); },
+      cursorActivity: function () { self.onCursorActivity(); }
+    });
+    this.editorAdapter.registerUndo(function () { self.undo(); });
+    this.editorAdapter.registerRedo(function () { self.redo(); });
+
+    this.serverAdapter.registerCallbacks({
+      client_left: function (clientId) { self.onClientLeft(clientId); },
+      set_name: function (clientId, name) { self.getClientObject(clientId).setName(name); },
+      ack: function () { self.serverAck(); },
+      operation: function (obj) {
+        self.applyServer(new WrappedOperation(
+          TextOperation.fromJSON(obj.operation),
+          OtherMeta.fromJSON(obj.meta)
+        ));
+      },
+      cursor: function (clientId, cursor) {
+        self.getClientObject(clientId).updateCursor(Cursor.fromJSON(cursor));
+      }
     });
   }
 
-  inherit(CodeMirrorClient, Client);
+  inherit(EditorClient, Client);
 
-  CodeMirrorClient.prototype.initializeSocket = function () {
-    var self = this;
-
-    this.socket
-      .on('client_left', function (obj) {
-        self.onClientLeft(obj.clientId);
-      })
-      .on('set_name', function (obj) {
-        var client = self.getClientObject(obj.clientId);
-        client.setName(obj.name);
-      })
-      .on('ack', function () { self.serverAck(); })
-      .on('operation', function (obj) {
-        var operation = new WrappedOperation(
-          TextOperation.fromJSON(obj.operation),
-          OtherMeta.fromJSON(obj.meta)
-        );
-        console.log("Operation from server by client " + obj.meta.clientId + ":", operation);
-        self.applyServer(operation);
-      })
-      .on('cursor', function (obj) {
-        var client = self.getClientObject(obj.clientId);
-        client.updateCursor(Cursor.fromJSON(obj.cursor));
-      });
-  };
-
-  CodeMirrorClient.prototype.initializeCodeMirror = function (str) {
-    var cm = this.cm;
-    var self = this;
-
-    cm.setValue(str);
-    this.oldValue = str;
-
-    cm.on('change', function (_, change) { self.onCodeMirrorChange(change); });
-    cm.on('cursorActivity', function () { self.onCodeMirrorCursorActivity(); });
-
-    cm.undo = function () { self.undo(); };
-    cm.redo = function () { self.redo(); };
-  };
-
-  CodeMirrorClient.prototype.initializeClients = function (clients) {
+  EditorClient.prototype.initializeClients = function (clients) {
+    this.clients = {};
     for (var clientId in clients) {
       if (clients.hasOwnProperty(clientId)) {
         var client = clients[clientId];
         client.clientId = clientId;
         this.clients[clientId] = new OtherClient(
-          client.clientId, this.clientListEl, this.cm,
-          client.name, client.cursor ? Cursor.fromJSON(client.cursor) : null
+          client.clientId,
+          this.clientListEl,
+          this.editorAdapter,
+          client.name,
+          client.cursor ? Cursor.fromJSON(client.cursor) : null
         );
       }
     }
   };
 
-  CodeMirrorClient.prototype.getClientObject = function (clientId) {
+  EditorClient.prototype.getClientObject = function (clientId) {
     var client = this.clients[clientId];
     if (client) { return client; }
-    return this.clients[clientId] = new OtherClient(clientId, this.clientListEl, this.cm);
+    return this.clients[clientId] = new OtherClient(
+      clientId,
+      this.clientListEl,
+      this.editorAdapter
+    );
   };
 
-  CodeMirrorClient.prototype.onClientLeft = function (clientId) {
+  EditorClient.prototype.onClientLeft = function (clientId) {
     console.log("User disconnected: " + clientId);
     var client = this.clients[clientId];
     if (!client) { return; }
@@ -1294,76 +1413,47 @@ ot.CodeMirrorClient = (function () {
     delete this.clients[clientId];
   };
 
-  CodeMirrorClient.prototype.initializeClientList = function () {
+  EditorClient.prototype.initializeClientList = function () {
     this.clientListEl = document.createElement('ul');
   };
 
-  CodeMirrorClient.prototype.applyUnredo = function (operation) {
-    this.unredo = true;
+  EditorClient.prototype.applyUnredo = function (operation) {
     this.undoManager.add(operation.invert(this.oldValue));
-    operation.wrapped.applyToCodeMirror(this.cm);
+    this.editorAdapter.applyOperation(operation.wrapped);
     this.cursor = operation.meta.cursorAfter;
-    this.cm.setSelection(
-      this.cm.posFromIndex(this.cursor.position),
-      this.cm.posFromIndex(this.cursor.selectionEnd)
-    );
+    this.editorAdapter.setCursor(this.cursor);
     this.applyClient(operation);
   };
 
-  CodeMirrorClient.prototype.undo = function () {
+  EditorClient.prototype.undo = function () {
     var self = this;
     this.undoManager.performUndo(function (o) { self.applyUnredo(o); });
   };
 
-  CodeMirrorClient.prototype.redo = function () {
+  EditorClient.prototype.redo = function () {
     var self = this;
     this.undoManager.performRedo(function (o) { self.applyUnredo(o); });
   };
 
-  CodeMirrorClient.prototype.onCodeMirrorChange = function (change) {
-    var cm = this.cm;
-    var oldValue = this.oldValue;
-    this.oldValue = cm.getValue();
+  EditorClient.prototype.onChange = function (oldValue, textOperation) {
     var cursorBefore = this.cursor;
     this.updateCursor();
-    try {
-      if (!this.fromServer && !this.unredo) {
-        var textOperation = TextOperation.fromCodeMirrorChange(change, oldValue);
-        var meta = new SelfMeta(cursorBefore, this.cursor);
-        var operation = new WrappedOperation(textOperation, meta);
-        var compose = this.undoManager.undoStack.length > 0 &&
-          !this.undoManager.dontCompose &&
-          last(this.undoManager.undoStack).wrapped
-            .invert(oldValue)
-            .shouldBeComposedWith(textOperation);
-        this.undoManager.add(operation.invert(oldValue), compose);
-        this.applyClient(operation);
-      }
-    } finally {
-      this.fromServer = false;
-      this.unredo     = false;
-    }
+    var meta = new SelfMeta(cursorBefore, this.cursor);
+    var operation = new WrappedOperation(textOperation, meta);
+    var compose = this.undoManager.undoStack.length > 0 &&
+      !this.undoManager.dontCompose &&
+      last(this.undoManager.undoStack).wrapped
+        .invert(oldValue)
+        .shouldBeComposedWith(textOperation);
+    this.undoManager.add(operation.invert(oldValue), compose);
+    this.applyClient(operation);
   };
 
-  CodeMirrorClient.prototype.updateCursor = function () {
-    function eqPos (a, b) { return a.line === b.line && a.ch === b.ch; }
-
-    var cm = this.cm;
-    var cursorPos = cm.getCursor();
-    var position = cm.indexFromPos(cursorPos);
-    var selectionEnd;
-    if (cm.somethingSelected()) {
-      var startPos = cm.getCursor(true);
-      var selectionEndPos = eqPos(cursorPos, startPos) ? cm.getCursor(false) : startPos;
-      selectionEnd = cm.indexFromPos(selectionEndPos);
-    } else {
-      selectionEnd = position;
-    }
-
-    this.cursor = new Cursor(position, selectionEnd);
+  EditorClient.prototype.updateCursor = function () {
+    this.cursor = this.editorAdapter.getCursor();
   };
 
-  CodeMirrorClient.prototype.onCodeMirrorCursorActivity = function () {
+  EditorClient.prototype.onCursorActivity = function () {
     var oldCursor = this.cursor;
     this.updateCursor();
     if (oldCursor && this.cursor.equals(oldCursor)) { return; }
@@ -1372,29 +1462,24 @@ ot.CodeMirrorClient = (function () {
       this.state.buffer.meta.cursorAfter = this.cursor;
     } else {
       var self = this;
-      this.socket.emit('cursor', this.cursor);
+      this.serverAdapter.sendCursor(this.cursor);
     }
   };
 
-  CodeMirrorClient.prototype.sendOperation = function (revision, operation) {
-    this.socket.emit('operation', {
-      revision: revision,
+  EditorClient.prototype.sendOperation = function (revision, operation) {
+    this.serverAdapter.sendOperation(revision, {
       meta: { cursor: operation.meta.cursorAfter },
       operation: operation.wrapped.toJSON()
     });
   };
 
-  CodeMirrorClient.prototype.applyOperation = function (operation) {
-    this.fromServer = true;
-    operation.wrapped.applyToCodeMirror(this.cm);
+  EditorClient.prototype.applyOperation = function (operation) {
+    this.editorAdapter.applyOperation(operation.wrapped);
+    this.updateCursor();
     var client = this.getClientObject(operation.meta.clientId);
     client.updateCursor(operation.meta.cursor);
     this.undoManager.transform(operation);
   };
-
-  function randomInt (n) {
-    return Math.floor(Math.random() * n);
-  }
 
   function rgb2hex (r, g, b) {
     function digits (n) {
@@ -1444,16 +1529,5 @@ ot.CodeMirrorClient = (function () {
     }
   }
 
-  function addStyleRule (css) {
-    try {
-      var styleSheet = document.styleSheets.item(0),
-          insertionPoint = (styleSheet.rules? styleSheet.rules:
-              styleSheet.cssRules).length;
-      styleSheet.insertRule(css, insertionPoint);
-    } catch (exc) {
-      console.error("Couldn't add style rule.", exc);
-    }
-  }
-
-  return CodeMirrorClient;
+  return EditorClient;
 }());

@@ -3,6 +3,8 @@ $(document).ready(function () {
   var Server = ot.Server;
   var TextOperation = ot.TextOperation;
   var WrappedOperation = ot.WrappedOperation;
+  var CodeMirrorAdapter = ot.CodeMirrorAdapter;
+
 
   // View
 
@@ -319,7 +321,7 @@ $(document).ready(function () {
     this.cm.on('change', function (cm, change) {
       if (!self.fromServer) {
         var operation = new WrappedOperation(
-          TextOperation.fromCodeMirrorChange(change, self.oldValue),
+          CodeMirrorAdapter.operationFromCodeMirrorChange(change, self.oldValue),
           { creator: self.name, id: generateOperationId() }
         );
         console.log(change, operation);
@@ -404,7 +406,7 @@ $(document).ready(function () {
 
   MyClient.prototype.applyOperation = function (operation) {
     this.fromServer = true;
-    operation.wrapped.applyToCodeMirror(this.cm);
+    CodeMirrorAdapter.applyOperationToCodeMirror(operation.wrapped, this.cm);
     this.fromServer = false;
   };
 
