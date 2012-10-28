@@ -89,8 +89,10 @@
 
   var undoBtn = document.getElementById('undo-btn');
   undoBtn.onclick = function (e) { cm.undo(); cm.focus(); stopEvent(e); };
+  disable(undoBtn);
   var redoBtn = document.getElementById('redo-btn');
   redoBtn.onclick = function (e) { cm.redo(); cm.focus(); stopEvent(e); };
+  disable(redoBtn);
 
   var boldBtn = document.getElementById('bold-btn');
   boldBtn.onclick = function (e) { bold(); stopEvent(e); };
