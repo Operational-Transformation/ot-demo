@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-var ot = require('operational-transformation');
+var ot = require('ot');
 var express = require('express');
 var socketIO = require('socket.io');
 var path = require('path');

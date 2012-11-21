@@ -1,6 +1,6 @@
 /*
  *    /\
- *   /  \ ot 0.0.9
+ *   /  \ ot 0.0.10
  *  /    \ http://ot.substance.io
  *  \    /
  *   \  / (c) 2012 Tim Baumann <tim@timbaumann.info> (http://timbaumann.info)
@@ -163,13 +163,12 @@ ot.TextOperation = (function () {
 
   // Converts operation into a JSON value.
   TextOperation.prototype.toJSON = function () {
-    return this;
+    return this.ops;
   };
 
   // Converts a plain JS object into an operation and validates it.
-  TextOperation.fromJSON = function (obj) {
+  TextOperation.fromJSON = function (ops) {
     var o = new TextOperation();
-    var ops = obj.ops;
     for (var i = 0, l = ops.length; i < l; i++) {
       var op = ops[i];
       if (isRetain(op)) {
@@ -181,12 +180,6 @@ ot.TextOperation = (function () {
       } else {
         throw new Error("unknown operation: " + JSON.stringify(op));
       }
-    }
-    if (o.baseLength !== obj.baseLength) {
-      throw new Error("baseLengths don't match");
-    }
-    if (o.targetLength !== obj.targetLength) {
-      throw new Error("targetLengths don't match");
     }
     return o;
   };
@@ -1083,8 +1076,10 @@ ot.CodeMirrorAdapter = (function () {
   };
 
   CodeMirrorAdapter.prototype.onChange = function (change) {
-    var operation = CodeMirrorAdapter.operationFromCodeMirrorChange(change, this.oldValue);
-    if (!this.silent) { this.trigger('change', this.oldValue, operation); }
+    if (!this.silent) {
+      var operation = CodeMirrorAdapter.operationFromCodeMirrorChange(change, this.oldValue);
+      this.trigger('change', this.oldValue, operation);
+    }
     this.oldValue = this.cm.getValue();
   };
 
