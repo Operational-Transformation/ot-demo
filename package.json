@@ -8,10 +8,10 @@
   "version": "0.0.9",
   "repository": {
     "type": "git",
-    "url": "https://github.com/timjb/javascript-operational-transformation-demo"
+    "url": "https://github.com/operational-transformation/ot.js-demo"
   },
   "bugs": {
-    "url": "https://github.com/timjb/javascript-operational-transformation-demo/issues"
+    "url": "https://github.com/operational-transformation/ot.js-demo/issues"
   },
   "dependencies": {
     "ot": "0.0.10",
@@ -25,7 +25,7 @@
   "licenses": [
     {
       "type": "MIT",
-      "url": "https://github.com/github.com/timjb/javascript-operational-transformation-demo/raw/master/LICENSE"
+      "url": "https://github.com/github.com/operational-transformation/ot.js-demo/raw/master/LICENSE"
     }
   ]
 }
