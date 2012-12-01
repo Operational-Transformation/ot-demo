@@ -1,7 +1,7 @@
 /*
  *    /\
  *   /  \ ot 0.0.10
- *  /    \ http://ot.substance.io
+ *  /    \ http://operational-transformation.github.com
  *  \    /
  *   \  / (c) 2012 Tim Baumann <tim@timbaumann.info> (http://timbaumann.info)
  *    \/ ot may be freely distributed under the MIT license.
@@ -398,9 +398,6 @@ ot.TextOperation = (function () {
       throw new Error("Both operations have to have the same base length");
     }
 
-    // Use the IDs of the two input operations. This enables clients to
-    // recognize their own operations when they receive operations from the
-    // server.
     var operation1prime = new TextOperation();
     var operation2prime = new TextOperation();
     var ops1 = operation1.ops, ops2 = operation2.ops;
@@ -1165,7 +1162,9 @@ ot.CodeMirrorAdapter = (function () {
         fromPos = this.cm.posFromIndex(cursor.selectionEnd);
         toPos = cursorPos;
       }
-      return this.cm.markText(fromPos, toPos, selectionClassName);
+      return this.cm.markText(fromPos, toPos, {
+        className: selectionClassName
+      });
     }
   };
 
