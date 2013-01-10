@@ -81,11 +81,6 @@
     mode: 'markdown',
     readOnly: 'nocursor'
   });
-  cm.on('change', function () {
-    if (!cmClient) { return; }
-    (cmClient.undoManager.canUndo() ? enable : disable)(undoBtn);
-    (cmClient.undoManager.canRedo() ? enable : disable)(redoBtn);
-  });
 
   var undoBtn = document.getElementById('undo-btn');
   undoBtn.onclick = function (e) { cm.undo(); cm.focus(); stopEvent(e); };
@@ -144,5 +139,12 @@
     );
     var userListWrapper = document.getElementById('userlist-wrapper');
     userListWrapper.appendChild(cmClient.clientListEl);
+    
+    cm.on('change', function () {
+      if (!cmClient) { return; }
+      console.log(cmClient.undoManager.canUndo(), cmClient.undoManager.canRedo());
+      (cmClient.undoManager.canUndo() ? enable : disable)(undoBtn);
+      (cmClient.undoManager.canRedo() ? enable : disable)(redoBtn);
+    });
   });
 })();
