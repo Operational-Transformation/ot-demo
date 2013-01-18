@@ -4,8 +4,10 @@ var ot = require('ot');
 var express = require('express');
 var socketIO = require('socket.io');
 var path = require('path');
+var http = require('http');
 
-var app = express.createServer();
+var app = express();
+var appServer = http.createServer(app);
 
 app.configure(function () {
   app.use(express.logger());
@@ -13,7 +15,7 @@ app.configure(function () {
   app.use(express.errorHandler({ dumpExceptions: true, showStack: true }));
 });
 
-var io = socketIO.listen(app);
+var io = socketIO.listen(appServer);
 
 // source: http://devcenter.heroku.com/articles/using-socket-io-with-node-js-on-heroku
 io.configure('production', function () {
@@ -27,7 +29,7 @@ var str = "# This is a Markdown heading\n\n"
         + "3. trois\n\n"
         + "Lorem *ipsum* dolor **sit** amet.\n\n"
         + "    $ touch test.txt";
-var server = new ot.CodeMirrorServer(str, io.sockets, [], function (socket, cb) {
+var cmServer = new ot.CodeMirrorServer(str, io.sockets, [], function (socket, cb) {
   cb(!!socket.mayEdit);
 });
 io.sockets.on('connection', function (socket) {
@@ -37,13 +39,13 @@ io.sockets.on('connection', function (socket) {
       return;
     }
     socket.mayEdit = true;
-    server.setName(socket, obj.name);
+    cmServer.setName(socket, obj.name);
     socket.emit('logged_in', {});
   });
 });
 
 var port = process.env.PORT || 3000;
-app.listen(port, function () {
+appServer.listen(port, function () {
   console.log("Listening on port " + port);
 });
 

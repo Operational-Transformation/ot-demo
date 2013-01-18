@@ -1,6 +1,6 @@
 /*
  *    /\
- *   /  \ ot 0.0.10
+ *   /  \ ot 0.0.11
  *  /    \ http://operational-transformation.github.com
  *  \    /
  *   \  / (c) 2012-2013 Tim Baumann <tim@timbaumann.info> (http://timbaumann.info)
@@ -944,14 +944,26 @@ ot.CodeMirrorAdapter = (function () {
 
   function CodeMirrorAdapter (cm) {
     this.cm = cm;
-    this.silent = false;
+    this.ignoreNextChange = false;
     this.oldValue = this.cm.getValue();
 
-    var self = this;
-    cm.on('change', function (_, change) { self.onChange(change); });
-    cm.on('cursorActivity', function () { self.trigger('cursorActivity'); });
-    cm.on('blur', function () { self.trigger('blur'); });
+    bind(this, 'onChange');
+    bind(this, 'onCursorActivity');
+    bind(this, 'onFocus');
+    bind(this, 'onBlur');
+    cm.on('change', this.onChange);
+    cm.on('cursorActivity', this.onCursorActivity);
+    cm.on('focus', this.onFocus);
+    cm.on('blur', this.onBlur);
   }
+
+  // Removes all event listeners from the CodeMirror instance.
+  CodeMirrorAdapter.prototype.detach = function () {
+    this.cm.off('change', this.onChange);
+    this.cm.off('cursorActivity', this.onCursorActivity);
+    this.cm.off('focus', this.onFocus);
+    this.cm.off('blur', this.onBlur);
+  };
 
   // The oldValue is needed to find
   CodeMirrorAdapter.operationFromCodeMirrorChange = function (change, oldValue) {
@@ -1073,12 +1085,22 @@ ot.CodeMirrorAdapter = (function () {
     this.callbacks = cb;
   };
 
-  CodeMirrorAdapter.prototype.onChange = function (change) {
-    if (!this.silent) {
+  CodeMirrorAdapter.prototype.onChange = function (_, change) {
+    if (!this.ignoreNextChange) {
       var operation = CodeMirrorAdapter.operationFromCodeMirrorChange(change, this.oldValue);
       this.trigger('change', this.oldValue, operation);
     }
+    this.ignoreNextChange = false;
     this.oldValue = this.cm.getValue();
+  };
+
+  CodeMirrorAdapter.prototype.onCursorActivity =
+  CodeMirrorAdapter.prototype.onFocus = function () {
+    this.trigger('cursorActivity');
+  };
+
+  CodeMirrorAdapter.prototype.onBlur = function () {
+    if (!this.cm.somethingSelected()) { this.trigger('blur'); }
   };
 
   CodeMirrorAdapter.prototype.getValue = function () {
@@ -1171,9 +1193,8 @@ ot.CodeMirrorAdapter = (function () {
   };
 
   CodeMirrorAdapter.prototype.applyOperation = function (operation) {
-    this.silent = true;
+    this.ignoreNextChange = true;
     CodeMirrorAdapter.applyOperationToCodeMirror(operation, this.cm);
-    this.silent = false;
   };
 
   CodeMirrorAdapter.prototype.registerUndo = function (undoFn) {
@@ -1191,9 +1212,20 @@ ot.CodeMirrorAdapter = (function () {
     }
   }
 
+  // Bind a method to an object, so it doesn't matter whether you call
+  // object.method() directly or pass object.method as a reference to another
+  // function.
+  function bind (obj, method) {
+    var fn = obj[method];
+    obj[method] = function () {
+      fn.apply(obj, arguments);
+    };
+  }
+
   return CodeMirrorAdapter;
 
 }());
+
 /*global ot */
 
 ot.SocketIOAdapter = (function () {
@@ -1301,8 +1333,8 @@ ot.EditorClient = (function () {
       this.listEl.appendChild(this.li);
     }
 
-    if (cursor) { this.updateCursor(cursor); }
     this.setColor(name ? hueFromName(name) : Math.random());
+    if (cursor) { this.updateCursor(cursor); }
   }
 
   OtherClient.prototype.setColor = function (hue) {
@@ -1432,11 +1464,13 @@ ot.EditorClient = (function () {
 
   EditorClient.prototype.undo = function () {
     var self = this;
+    if (!this.undoManager.canUndo()) { return; }
     this.undoManager.performUndo(function (o) { self.applyUnredo(o); });
   };
 
   EditorClient.prototype.redo = function () {
     var self = this;
+    if (!this.undoManager.canRedo()) { return; }
     this.undoManager.performRedo(function (o) { self.applyUnredo(o); });
   };
 
