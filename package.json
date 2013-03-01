@@ -1,6 +1,6 @@
 {
-  "name": "operational-transformation-demo",
-  "description": "Demo for operational-transformation package",
+  "name": "ot-demo",
+  "description": "Demo for ot package",
   "keywords": [
     "operational transformation",
     "ot"
@@ -8,10 +8,10 @@
   "version": "0.0.11",
   "repository": {
     "type": "git",
-    "url": "https://github.com/operational-transformation/ot.js-demo"
+    "url": "https://github.com/operational-transformation/ot-demo"
   },
   "bugs": {
-    "url": "https://github.com/operational-transformation/ot.js-demo/issues"
+    "url": "https://github.com/operational-transformation/ot-demo/issues"
   },
   "dependencies": {
     "ot": "0.0.11",
@@ -25,7 +25,7 @@
   "licenses": [
     {
       "type": "MIT",
-      "url": "https://github.com/github.com/operational-transformation/ot.js-demo/raw/master/LICENSE"
+      "url": "https://github.com/github.com/operational-transformation/ot-demo/raw/master/LICENSE"
     }
   ]
 }
