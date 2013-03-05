@@ -4,9 +4,9 @@
 <head>
   <meta charset="utf-8" />
   <title>Collaborative editing with CodeMirror</title>
-  <link rel="stylesheet" href="/bootstrap/css/bootstrap.min.css" />
-  <link rel="stylesheet" href="/codemirror/lib/codemirror.css" />
-  <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/static/components/bootstrap/css/bootstrap.min.css" />
+  <link rel="stylesheet" href="/static/components/codemirror/lib/codemirror.css" />
+  <link rel="stylesheet" href="/static/styles.css" />
 </head>
 
 <body>
@@ -40,8 +40,10 @@
           </div>
           <div class="span6">
             <form id="login-form" class="form-inline btn-toolbar">
-              <input id="username" class="span2 input-small" autofocus="autofocus" type="text" placeholder="Username" required="required" value="" />
-              <input type="submit" class="btn btn-success" value="Participate" />
+              <div class="input-append">
+                <input id="username" class="span2 input-small" autofocus="autofocus" type="text" placeholder="Username" required="required" value="" />
+                <input type="submit" class="btn btn-success" value="Join" />
+              </div>
             </form>
           </div>
         </div>
@@ -54,13 +56,19 @@
     </div>
   </div>
 
-  <script src="/codemirror/lib/codemirror.js"></script>
-  <script src="/codemirror/mode/xml/xml.js"></script>
-  <script src="/codemirror/mode/markdown/markdown.js"></script>
-  <script src="/socket.io/socket.io.js"></script>
+  <script src="/static/components/codemirror/lib/codemirror.js"></script>
+  <script src="/static/components/codemirror/mode/xml/xml.js"></script>
+  <script src="/static/components/codemirror/mode/markdown/markdown.js"></script>
+  <script src="/static/components/jquery/jquery.min.js"></script>
+  <script>
+    var useSocketIO = window.location.hash === '#socketio';
+    if (useSocketIO) {
+      document.write('<'+'script src="/socket.io/socket.io.js"></'+'script>');
+    }
+  </script>
   <!--<script src="/ot-min.js"></script>-->
-  <script src="/ot.js"></script>
-  <script src="/client.js"></script>
+  <script src="/static/ot.js"></script>
+  <script src="/static/client.js"></script>
 </body>
 
 </html>

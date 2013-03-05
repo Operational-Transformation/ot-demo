@@ -30,17 +30,18 @@ var str = "# This is a Markdown heading\n\n"
         + "3. trois\n\n"
         + "Lorem *ipsum* dolor **sit** amet.\n\n"
         + "    $ touch test.txt";
-var cmServer = new ot.CodeMirrorServer(str, io.sockets, [], function (socket, cb) {
+var socketIOServer = new ot.EditorSocketIOServer(str, [], 'demo', function (socket, cb) {
   cb(!!socket.mayEdit);
 });
 io.sockets.on('connection', function (socket) {
+  socketIOServer.addClient(socket);
   socket.on('login', function (obj) {
     if (typeof obj.name !== 'string') {
       console.error('obj.name is not a string');
       return;
     }
     socket.mayEdit = true;
-    cmServer.setName(socket, obj.name);
+    socketIOServer.setName(socket, obj.name);
     socket.emit('logged_in', {});
   });
 });

@@ -292,7 +292,7 @@ postOTRevisionR rev = do
       liftIO $ do
         signal (otDocBroadcast otDoc) (Just operation', [cursorUpdate])
         putMVar otMVar otDoc''
-      getOTRevisionR rev
+      jsonToRepJson $ A.object [ "ok" .= ("document updated" :: Text) ]
 
 postOTCursorR :: ComplexRevision -> Handler RepJson
 postOTCursorR (ComplexRevision major _) = do
