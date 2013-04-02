@@ -3,6 +3,6 @@
   "dependencies": {
     "jquery": "1.9.1",
     "bootstrap": "http://twitter.github.com/bootstrap/assets/bootstrap.zip",
-    "codemirror": "https://github.com/marijnh/CodeMirror/archive/master.zip"
+    "codemirror": "http://codemirror.net/codemirror-3.11.zip"
   }
 }

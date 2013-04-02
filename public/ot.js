@@ -1,6 +1,6 @@
 /*
  *    /\
- *   /  \ ot 0.0.11
+ *   /  \ ot 0.0.12
  *  /    \ http://operational-transformation.github.com
  *  \    /
  *   \  / (c) 2012-2013 Tim Baumann <tim@timbaumann.info> (http://timbaumann.info)
@@ -276,7 +276,7 @@ ot.TextOperation = (function () {
         throw new Error("Cannot compose operations: first operation is too short.");
       }
       if (typeof op2 === 'undefined') {
-        throw new Error("Cannot compose operations: fist operation is too long.");
+        throw new Error("Cannot compose operations: first operation is too long.");
       }
 
       if (isRetain(op1) && isRetain(op2)) {
@@ -343,6 +343,25 @@ ot.TextOperation = (function () {
     return operation;
   };
 
+  function getSimpleOp (operation, fn) {
+    var ops = operation.ops;
+    var isRetain = TextOperation.isRetain;
+    switch (ops.length) {
+    case 1:
+      return ops[0];
+    case 2:
+      return isRetain(ops[0]) ? ops[1] : (isRetain(ops[1]) ? ops[0] : null);
+    case 3:
+      if (isRetain(ops[0]) && isRetain(ops[2])) { return ops[1]; }
+    }
+    return null;
+  }
+
+  function getStartIndex (operation) {
+    if (isRetain(operation.ops[0])) { return operation.ops[0]; }
+    return 0;
+  }
+
   // When you use ctrl-z to undo your latest changes, you expect the program not
   // to undo every single keystroke but to undo your last sentence you wrote at
   // a stretch or the deletion you did by holding the backspace key down. This
@@ -352,25 +371,6 @@ ot.TextOperation = (function () {
   // operations delete text at the same position. You may want to include other
   // factors like the time since the last change in your decision.
   TextOperation.prototype.shouldBeComposedWith = function (other) {
-    function getSimpleOp (operation, fn) {
-      var ops = operation.ops;
-      var isRetain = TextOperation.isRetain;
-      switch (ops.length) {
-      case 1:
-        return ops[0];
-      case 2:
-        return isRetain(ops[0]) ? ops[1] : (isRetain(ops[1]) ? ops[0] : null);
-      case 3:
-        if (isRetain(ops[0]) && isRetain(ops[2])) { return ops[1]; }
-      }
-      return null;
-    }
-
-    function getStartIndex (operation) {
-      if (isRetain(operation.ops[0])) { return operation.ops[0]; }
-      return 0;
-    }
-
     if (this.isNoop() || other.isNoop()) { return true; }
 
     var startA = getStartIndex(this), startB = getStartIndex(other);
@@ -390,10 +390,31 @@ ot.TextOperation = (function () {
     return false;
   };
 
+  // Decides whether two operations should be composed with each other
+  // if they were inverted, that is
+  // `shouldBeComposedWith(a, b) = shouldBeComposedWithInverted(b^{-1}, a^{-1})`.
+  TextOperation.prototype.shouldBeComposedWithInverted = function (other) {
+    if (this.isNoop() || other.isNoop()) { return true; }
+
+    var startA = getStartIndex(this), startB = getStartIndex(other);
+    var simpleA = getSimpleOp(this), simpleB = getSimpleOp(other);
+    if (!simpleA || !simpleB) { return false; }
+
+    if (isInsert(simpleA) && isInsert(simpleB)) {
+      return startA + simpleA.length === startB || startA === startB;
+    }
+
+    if (isDelete(simpleA) && isDelete(simpleB)) {
+      return startB - simpleB === startA;
+    }
+
+    return false;
+  };
+
   // Transform takes two operations A and B that happened concurrently and
-  // produces two operations A' and B' (in an arry) such that
-  // apply(apply(S, A), B') = apply(apply(S, B), A'). This function is the heart
-  // of OT.
+  // produces two operations A' and B' (in an array) such that
+  // `apply(apply(S, A), B') = apply(apply(S, B), A')`. This function is the
+  // heart of OT.
   TextOperation.transform = function (operation1, operation2) {
     if (operation1.baseLength !== operation2.baseLength) {
       throw new Error("Both operations have to have the same base length");
@@ -990,17 +1011,11 @@ ot.CodeMirrorAdapter = (function () {
   function CodeMirrorAdapter (cm) {
     this.cm = cm;
     this.ignoreNextChange = false;
-    this.changeRanges = [];
-    this.docLength = this.cm.indexFromPos({ line: this.cm.lastLine(), ch: 0 }) +
-      this.cm.getLine(this.cm.lastLine()).length;
-    this.oldValue = this.cm.getValue();
 
-    bind(this, 'onBeforeChange');
     bind(this, 'onChange');
     bind(this, 'onCursorActivity');
     bind(this, 'onFocus');
     bind(this, 'onBlur');
-    cm.on('beforeChange', this.onBeforeChange);
     cm.on('change', this.onChange);
     cm.on('cursorActivity', this.onCursorActivity);
     cm.on('focus', this.onFocus);
@@ -1009,60 +1024,108 @@ ot.CodeMirrorAdapter = (function () {
 
   // Removes all event listeners from the CodeMirror instance.
   CodeMirrorAdapter.prototype.detach = function () {
-    this.cm.off('beforeChange', this.onBeforeChange);
     this.cm.off('change', this.onChange);
     this.cm.off('cursorActivity', this.onCursorActivity);
     this.cm.off('focus', this.onFocus);
     this.cm.off('blur', this.onBlur);
   };
 
-  function eqPos (a, b) { return a.line === b.line && a.ch === b.ch; }
+  function cmpPos (a, b) {
+    if (a.line < b.line) { return -1; }
+    if (a.line > b.line) { return 1; }
+    if (a.ch < b.ch)     { return -1; }
+    if (a.ch > b.ch)     { return 1; }
+    return 0;
+  }
+  function posEq (a, b) { return cmpPos(a, b) === 0; }
+  function posLe (a, b) { return cmpPos(a, b) <= 0; }
+
+  function codemirrorDocLength (doc) {
+    return doc.indexFromPos({ line: doc.lastLine(), ch: 0 }) +
+      doc.getLine(doc.lastLine()).length;
+  }
 
   // Converts a CodeMirror change object into a TextOperation and its inverse
-  // and returns them as a two-element array. Apart from the CodeMirror change
-  // object, it requires several other pieces of information:
-  //
-  // * `doc`: the CodeMirror document (a standalone document or simply the CodeMirror
-  //   instance)
-  // * `docStartLength`: the length of the document in characters before the change.
-  // * `changeRanges`: an array of `{ from, to, fromIndex, replacedText }` objects that contain
-  //   the same from and to position objects in the same order as the linked
-  //   list in the change object. `fromIndex` is the zero-based position in
-  //   the pre-change document corresponding to `from`. `replacedText` contains
-  //   the text that got deleted by the change.
-  CodeMirrorAdapter.operationFromCodeMirrorChange = function (change, doc, docStartLength, changeRanges) {
-    var docLength = docStartLength;
-    var operation = new TextOperation().retain(docLength);
-    var inverse   = new TextOperation().retain(docLength);
+  // and returns them as a two-element array.
+  CodeMirrorAdapter.operationFromCodeMirrorChange = function (change, doc) {
+    // Approach: Replay the changes, beginning with the most recent one, and
+    // construct the operation and its inverse. We have to convert the position
+    // in the pre-change coordinate system to an index. We have a method to
+    // convert a position in the coordinate system after all changes to an index,
+    // namely CodeMirror's `indexFromPos` method. We can use the information of
+    // a single change object to convert a post-change coordinate system to a
+    // pre-change coordinate system. We can now proceed inductively to get a
+    // pre-change coordinate system for all changes in the linked list.
+    // A disadvantage of this approach is its complexity `O(n^2)` in the length
+    // of the linked list of changes.
 
-    var i = 0;
+    var changes = [], i = 0;
     while (change) {
-      var changeRange = changeRanges[i];
-      if (!changeRange || !eqPos(changeRange.from, change.from) || !eqPos(changeRange.to, change.to)) {
-        throw new Error("Not enough information in 'changeRanges' array.");
-      }
-      var text = change.text.join('\n');
-      var replacedText = changeRange.replacedText;
-      var restLength = docLength - changeRange.fromIndex - replacedText.length;
+      changes[i++] = change;
+      change = change.next;
+    }
 
-      operation = operation.compose(new TextOperation()
-        .retain(changeRange.fromIndex)
-        ['delete'](replacedText.length)
-        .insert(text)
+    var docEndLength = codemirrorDocLength(doc);
+    var operation    = new TextOperation().retain(docEndLength);
+    var inverse      = new TextOperation().retain(docEndLength);
+
+    var indexFromPos = function (pos) {
+      return doc.indexFromPos(pos);
+    };
+
+    function last (arr) { return arr[arr.length - 1]; }
+
+    function sumLengths (strArr) {
+      if (strArr.length === 0) { return 0; }
+      var sum = 0;
+      for (var i = 0; i < strArr.length; i++) { sum += strArr[i].length; }
+      return sum + strArr.length - 1;
+    }
+
+    function updateIndexFromPos (indexFromPos, change) {
+      return function (pos) {
+        if (posLe(pos, change.from)) { return indexFromPos(pos); }
+        if (posLe(change.to, pos)) {
+          return indexFromPos({
+            line: pos.line + change.text.length - 1 - (change.to.line - change.from.line),
+            ch: (change.to.line < pos.line) ?
+              pos.ch :
+              (change.text.length <= 1) ?
+                pos.ch - (change.to.ch - change.from.ch) + sumLengths(change.text) :
+                pos.ch - change.to.ch + last(change.text).length
+          }) + sumLengths(change.removed) - sumLengths(change.text);
+        }
+        if (change.from.line === pos.line) {
+          return indexFromPos(change.from) + pos.ch - change.from.ch;
+        }
+        return indexFromPos(change.from) +
+          sumLengths(change.removed.slice(0, pos.line - change.from.line)) +
+          1 + pos.ch;
+      };
+    }
+
+    for (i = changes.length - 1; i >= 0; i--) {
+      change = changes[i];
+      indexFromPos = updateIndexFromPos(indexFromPos, change);
+
+      var fromIndex = indexFromPos(change.from);
+      var restLength = docEndLength - fromIndex - sumLengths(change.text);
+
+      operation = new TextOperation()
+        .retain(fromIndex)
+        ['delete'](sumLengths(change.removed))
+        .insert(change.text.join('\n'))
+        .retain(restLength)
+        .compose(operation);
+
+      inverse = inverse.compose(new TextOperation()
+        .retain(fromIndex)
+        ['delete'](sumLengths(change.text))
+        .insert(change.removed.join('\n'))
         .retain(restLength)
       );
 
-      inverse = new TextOperation()
-        .retain(changeRange.fromIndex)
-        ['delete'](text.length)
-        .insert(replacedText)
-        .retain(restLength)
-        .compose(inverse);
-
-      docLength += -replacedText.length + text.length;
-
-      change = change.next;
-      i++;
+      docEndLength += sumLengths(change.removed) - sumLengths(change.text);
     }
 
     return [operation, inverse];
@@ -1093,37 +1156,12 @@ ot.CodeMirrorAdapter = (function () {
     this.callbacks = cb;
   };
 
-  // Returns a `changeRange` object (as described in the documentation for the
-  // `operationFromCodeMirrorChange` method) from a change object returned by
-  // the `'beforeChange'` event. Must be called directly from the event handler.
-  // Note that the objects obtained from the `beforeChange` events are only in
-  // one-to-one correspondents with the elements of the linked list of change
-  // objects if the document doesn't contain read-only ranges!
-  CodeMirrorAdapter.getChangeRange = function (doc, change) {
-    return {
-      from: change.from,
-      fromIndex: doc.indexFromPos(change.from),
-      to: change.to,
-      replacedText: doc.getRange(change.from, change.to)
-    };
-  };
-
-  CodeMirrorAdapter.prototype.onBeforeChange = function (_, change) {
-    this.changeRanges.push(CodeMirrorAdapter.getChangeRange(this.cm, change));
-  };
-
   CodeMirrorAdapter.prototype.onChange = function (_, change) {
     if (!this.ignoreNextChange) {
-      var pair = CodeMirrorAdapter.operationFromCodeMirrorChange(
-        change, this.cm,
-        this.docLength, this.changeRanges
-      );
+      var pair = CodeMirrorAdapter.operationFromCodeMirrorChange(change, this.cm);
       this.trigger('change', pair[0], pair[1]);
     }
     this.ignoreNextChange = false;
-    this.changeRanges = [];
-    this.docLength = this.cm.indexFromPos({ line: this.cm.lastLine(), ch: 0 }) +
-      this.cm.getLine(this.cm.lastLine()).length;
   };
 
   CodeMirrorAdapter.prototype.onCursorActivity =
@@ -1146,7 +1184,7 @@ ot.CodeMirrorAdapter = (function () {
     var selectionEnd;
     if (cm.somethingSelected()) {
       var startPos = cm.getCursor(true);
-      var selectionEndPos = eqPos(cursorPos, startPos) ? cm.getCursor(false) : startPos;
+      var selectionEndPos = posEq(cursorPos, startPos) ? cm.getCursor(false) : startPos;
       selectionEnd = cm.indexFromPos(selectionEndPos);
     } else {
       selectionEnd = position;
@@ -1188,6 +1226,7 @@ ot.CodeMirrorAdapter = (function () {
       cursorEl.style.borderLeftColor = color;
       cursorEl.style.height = (cursorCoords.bottom - cursorCoords.top) * 0.9 + 'px';
       cursorEl.style.marginTop = (cursorCoords.top - cursorCoords.bottom) + 'px';
+      cursorEl.style.zIndex = 0;
       cursorEl.setAttribute('data-clientid', clientId);
       this.cm.addWidget(cursorPos, cursorEl, false);
       return {
@@ -1536,7 +1575,6 @@ ot.EditorClient = (function () {
     this.serverAdapter = serverAdapter;
     this.editorAdapter = editorAdapter;
     this.undoManager = new UndoManager();
-    this.lastOperation = null;
 
     this.initializeClientList();
     this.initializeClients(clients);
@@ -1663,14 +1701,8 @@ ot.EditorClient = (function () {
     var meta = new SelfMeta(cursorBefore, this.cursor);
     var operation = new WrappedOperation(textOperation, meta);
 
-    var compose;
-    if (!this.undoManager.dontCompose && this.lastOperation && this.lastOperation.shouldBeComposedWith(textOperation)) {
-      compose = true;
-      this.lastOperation = this.lastOperation.compose(textOperation);
-    } else {
-      compose = false;
-      this.lastOperation = textOperation;
-    }
+    var compose = this.undoManager.undoStack.length > 0 &&
+      inverse.shouldBeComposedWithInverted(last(this.undoManager.undoStack).wrapped);
     var inverseMeta = new SelfMeta(this.cursor, cursorBefore);
     this.undoManager.add(new WrappedOperation(inverse, inverseMeta), compose);
     this.applyClient(textOperation);
