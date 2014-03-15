@@ -7,6 +7,10 @@ h1 {
   height: 600px;
 }
 
+#editor-wrapper > .row {
+  margin: 8px 0;
+}
+
 #overlay {
   background: rgba(255, 255, 255, 0.5);
   z-index: 1338;
@@ -16,3 +20,11 @@ h1 {
 
 /* only CodeMirror v3 can do that */
 .cm-header { font-size: 150%; font-family: Helvetica, Arial, sans-serif; }
+
+#userlist-wrapper h2 {
+  margin-top: 0;
+}
+
+#userlist-wrapper ul {
+  padding-left: 20px;
+}

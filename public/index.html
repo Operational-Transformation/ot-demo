@@ -4,8 +4,9 @@
 <head>
   <meta charset="utf-8" />
   <title>Collaborative editing with CodeMirror</title>
-  <link rel="stylesheet" href="/static/components/bootstrap/css/bootstrap.min.css" />
-  <link rel="stylesheet" href="/static/components/codemirror/lib/codemirror.css" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="/static/bower_components/bootstrap/dist/css/bootstrap.min.css" />
+  <link rel="stylesheet" href="/static/bower_components/codemirror/lib/codemirror.css" />
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 
@@ -13,42 +14,44 @@
   <div class="container" id="wrapper">
     <h1>Collaborative editing with CodeMirror</h1>
     <div class="row">
-      <div class="span9" id="editor-wrapper">
+      <div class="col-sm-9" id="editor-wrapper">
         <div class="row">
-          <div class="span3">
+          <div class="col-sm-6 col-md-4">
             <div class="btn-toolbar">
               <div class="btn-group">
-                <a id="undo-btn" class="btn" href="#" title="Undo">
-                  <i class="icon-arrow-left"></i>
+                <a id="undo-btn" class="btn btn-default" href="#" title="Undo">
+                  <span class="glyphicon glyphicon-arrow-left"></span>
                 </a>
-                <a id="redo-btn" class="btn" href="#" title="Redo">
-                  <i class="icon-arrow-right"></i>
+                <a id="redo-btn" class="btn btn-default" href="#" title="Redo">
+                  <span class="glyphicon glyphicon-arrow-right"></span>
                 </a>
               </div>
               <div class="btn-group">
-                <a id="bold-btn" class="btn" href="#" title="Bold">
-                  <i class="icon-bold"></i>
+                <a id="bold-btn" class="btn btn-default" href="#" title="Bold">
+                  <span class="glyphicon glyphicon-bold"></span>
                 </a>
-                <a id="italic-btn" class="btn" href="#" title="Italic">
-                  <i class="icon-italic"></i>
+                <a id="italic-btn" class="btn btn-default" href="#" title="Italic">
+                  <span class="glyphicon glyphicon-italic"></span>
                 </a>
-                <a id="code-btn" class="btn" href="#" title="Code">
-                  <i class="icon-barcode"></i>
+                <a id="code-btn" class="btn btn-default" href="#" title="Code">
+                  <span class="glyphicon glyphicon-barcode"></span>
                 </a>
               </div>
             </div>
           </div>
-          <div class="span6">
+          <div class="col-sm-5 col-md-4 col-lg-3">
             <form id="login-form" class="form-inline btn-toolbar">
-              <div class="input-append">
-                <input id="username" class="span2 input-small" autofocus="autofocus" type="text" placeholder="Username" required="required" value="" />
-                <input type="submit" class="btn btn-success" value="Join" />
+              <div class="input-group">
+                <input id="username" class="form-control col-sm-2" autofocus="autofocus" type="text" placeholder="Username" required="required" value="" />
+                <span class="input-group-btn">
+                  <input type="submit" class="btn btn-success" value="Join" />
+                </span>
               </div>
             </form>
           </div>
         </div>
       </div>
-      <div class="span3">
+      <div class="col-sm-3">
         <div class="well" id="userlist-wrapper">
           <h2>Users</h2>
         </div>
@@ -56,10 +59,10 @@
     </div>
   </div>
 
-  <script src="/static/components/codemirror/lib/codemirror.js"></script>
-  <script src="/static/components/codemirror/mode/xml/xml.js"></script>
-  <script src="/static/components/codemirror/mode/markdown/markdown.js"></script>
-  <script src="/static/components/jquery/jquery.min.js"></script>
+  <script src="/static/bower_components/codemirror/lib/codemirror.js"></script>
+  <script src="/static/bower_components/codemirror/mode/xml/xml.js"></script>
+  <script src="/static/bower_components/codemirror/mode/markdown/markdown.js"></script>
+  <script src="/static/bower_components/jquery/jquery.min.js"></script>
   <script>
     var useSocketIO = window.location.hash !== '#ajax';
     if (useSocketIO) {
