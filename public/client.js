@@ -76,12 +76,12 @@
   function wrap (chars) {
     cm.operation(function () {
       if (cm.somethingSelected()) {
-        var selection = cm.getSelection();
-        if (beginsWith(selection, chars) && endsWith(selection, chars)) {
-          cm.replaceSelection(selection.slice(chars.length, selection.length - chars.length));
-        } else {
-          cm.replaceSelection(chars + selection + chars);
-        }
+        cm.replaceSelections(cm.getSelections().map(function (selection) {
+          if (beginsWith(selection, chars) && endsWith(selection, chars)) {
+            return selection.slice(chars.length, selection.length - chars.length);
+          }
+          return chars + selection + chars;
+        }), 'around');
       } else {
         var index = cm.indexFromPos(cm.getCursor());
         cm.replaceSelection(chars + chars);
