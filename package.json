@@ -14,7 +14,7 @@
     "url": "https://github.com/operational-transformation/ot-demo/issues"
   },
   "dependencies": {
-    "ot": "0.0.12",
+    "ot": "0.0.14",
     "express": "3.4.8",
     "socket.io": "0.9.16"
   },
