@@ -1,8 +1,9 @@
 {
   "name": "ot-demo",
   "dependencies": {
-    "jquery": "2.1.0",
-    "bootstrap": "3.1.1",
-    "codemirror": "4.0.2"
+    "jquery": "2.1.1",
+    "bootstrap": "3.3.1",
+    "codemirror": "4.8",
+    "socket.io-client": "1.2.1"
   }
 }

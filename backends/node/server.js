@@ -2,6 +2,9 @@
 
 var ot = require('ot');
 var express = require('express');
+var morgan = require('morgan');
+var serveStatic = require('serve-static');
+var errorhandler = require('errorhandler');
 var socketIO = require('socket.io');
 var path = require('path');
 var http = require('http');
@@ -9,20 +12,20 @@ var http = require('http');
 var app = express();
 var appServer = http.createServer(app);
 
-app.configure(function () {
-  app.use(express.logger());
-  app.use('/', express.static(path.join(__dirname, '../../public')));
-  app.use('/static', express.static(path.join(__dirname, '../../public')));
-  app.use(express.errorHandler({ dumpExceptions: true, showStack: true }));
-});
+app.use(morgan('combined'));
+app.use('/', serveStatic(path.join(__dirname, '../../public')));
+app.use('/static', serveStatic(path.join(__dirname, '../../public')));
+if (process.env.NODE_ENV === 'development') {
+  app.use(errorhandler());
+}
 
 var io = socketIO.listen(appServer);
 
 // source: http://devcenter.heroku.com/articles/using-socket-io-with-node-js-on-heroku
-io.configure('production', function () {
+if (process.env.NODE_ENV === 'production') {
   io.set('transports', ['xhr-polling']);
   io.set('polling duration', 10);
-});
+}
 
 var str = "# This is a Markdown heading\n\n"
         + "1. un\n"

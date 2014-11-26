@@ -63,12 +63,8 @@
   <script src="/static/bower_components/codemirror/mode/xml/xml.js"></script>
   <script src="/static/bower_components/codemirror/mode/markdown/markdown.js"></script>
   <script src="/static/bower_components/jquery/dist/jquery.min.js"></script>
-  <script>
-    var useSocketIO = window.location.hash !== '#ajax';
-    if (useSocketIO) {
-      document.write('<'+'script src="/socket.io/socket.io.js"></'+'script>');
-    }
-  </script>
+  <script src="/static/bower_components/socket.io-client/socket.io.js"></script>
+  <!--<script src="/static/socket.io.js"></script>-->
   <!--<script src="/ot-min.js"></script>-->
   <script src="/static/ot.js"></script>
   <script src="/static/client.js"></script>

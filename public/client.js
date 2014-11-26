@@ -6,42 +6,13 @@
 
   var socket;
 
-  // uncomment to simulate more latency
-  /*(function () {
-    var emit = socket.emit;
-    var queue = [];
-    socket.emit = function () {
-      queue.push(arguments);
-      return socket;
-    };
-    setInterval(function () {
-      if (queue.length) {
-        emit.apply(socket, queue.shift());
-      }
-    }, 800);
-  })();*/
-
   var disabledRegex = /(^|\s+)disabled($|\s+)/;
 
-  var login;
-  if (useSocketIO) {
-    login = function (username, callback) {
-      socket
-        .emit('login', { name: username })
-        .on('logged_in', callback);
-    };
-  } else {
-    login = function (username, callback) {
-      $.ajax({
-        method: 'GET',
-        url: '/login/' + encodeURIComponent(username),
-        success: function () { callback(); },
-        error: function () {
-          alert("Login failed!");
-        }
-      });
-    };
-  }
+  var login = function (username, callback) {
+    socket
+      .emit('login', { name: username })
+      .on('logged_in', callback);
+  };
 
   function enable (el) {
     el.className = el.className.replace(disabledRegex, ' ');
@@ -149,30 +120,25 @@
   cmWrapper.appendChild(overlay);
 
   var cmClient;
-  if (useSocketIO) {
-    socket = io.connect('/');
-    socket.on('doc', function (obj) {
-      init(obj.str, obj.revision, obj.clients, new SocketIOAdapter(socket));
-    });
-  } else {
-    $.ajax({
-      method: 'GET',
-      url: '/ot',
-      dataType: 'json',
-      success: function (obj) {
-        var users = {};
-        for (var name in obj.users) {
-          if (obj.users.hasOwnProperty(name)) {
-            users[name] = { name: name, cursor: obj.users[name] };
-          }
-        }
-        init(obj.document, obj.revision.major, users, new AjaxAdapter('/ot', {}, obj.revision));
-      },
-      error: function () {
-        alert("Failed to load document state!");
+  socket = io.connect('/');
+  socket.on('doc', function (obj) {
+    init(obj.str, obj.revision, obj.clients, new SocketIOAdapter(socket));
+  });
+
+  // uncomment to simulate more latency
+  (function () {
+    var emit = socket.emit;
+    var queue = [];
+    socket.emit = function () {
+      queue.push(arguments);
+      return socket;
+    };
+    setInterval(function () {
+      if (queue.length) {
+        emit.apply(socket, queue.shift());
       }
-    });
-  }
+    }, 800);
+  })();
 
   function init (str, revision, clients, serverAdapter) {
     cm.setValue(str);
