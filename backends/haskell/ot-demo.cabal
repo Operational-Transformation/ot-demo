@@ -15,13 +15,20 @@ cabal-version:       >=1.8
 executable ot-demo
   main-is:             OTDemo.hs
   -- other-modules:       
-  build-depends:       base == 4.5.*,
-                       ot == 0.1.2,
-                       yesod >= 1.1 && < 1.2,
-                       yesod-static >= 1.1 && < 1.2,
+  build-depends:       base >= 4.6 && < 5,
+                       ot >= 0.2.0.0,
+                       yesod-core >= 1.4.5 && < 1.5,
+                       yesod-static >= 1.4 && < 1.5,
                        concurrent-extra >= 0.7,
+                       engine-io >= 1.2.3 && < 1.3,
+                       engine-io-yesod >= 1.0.1 && < 1.1,
+                       socket-io == 1.1.1.1,
                        text,
-                       aeson,
+                       aeson >= 0.7 && < 0.9,
                        containers,
-                       http-types
+                       http-types,
+                       mtl,
+                       transformers,
+                       stm,
+                       bytestring
   ghc-options:         -threaded -O2 -Wall

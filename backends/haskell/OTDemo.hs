@@ -1,310 +1,146 @@
-{-# LANGUAGE TemplateHaskell, QuasiQuotes, TypeFamilies, MultiParamTypeClasses, OverloadedStrings #-}
+{-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedLists #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Main where
 
-import Yesod
-import Yesod.Static
-import Data.Text (Text, pack, split)
-import Control.Concurrent.MVar
-import Control.OperationalTransformation
-import Control.OperationalTransformation.Server
-import Control.OperationalTransformation.Text
-import Data.Monoid (mconcat, (<>))
-import Control.Concurrent
-import Control.Concurrent.Broadcast
-import Control.Applicative ((<$>), (<*>))
+import qualified Yesod.Core as YC
+import qualified Yesod.Static as YS
+--import qualified Network.EngineIO as EIO
+import qualified Network.SocketIO as SIO
+import qualified Data.Text as T
+import qualified Control.OperationalTransformation.Server as OTS
+import qualified Control.OperationalTransformation.Text as OTT
+import qualified Control.OperationalTransformation.Selection as Sel
+import Network.EngineIO.Yesod (yesodAPI)
+import Control.Monad.State.Strict (StateT)
+import Control.Monad.Trans.Reader (ReaderT)
+import Control.Monad.Reader (MonadReader (..))
+import Control.Monad.IO.Class (liftIO)
+import Control.Monad (mzero)
+import Control.Applicative
+import qualified Control.Concurrent.STM as STM
+import Data.Aeson
 import qualified Data.Map as M
-import Data.Maybe (maybeToList)
-import Control.Monad (foldM, forever)
-import Network.HTTP.Types.Status
-import Data.Aeson as A
-import Data.Aeson.Types
---import Data.Function (fix)
-
-data ComplexRevision = ComplexRevision
-  { majorRev :: Revision
-  , minorRev :: Revision
-  } deriving (Show, Read, Eq)
-
-instance Ord ComplexRevision where
-  compare (ComplexRevision aMaj aMin) (ComplexRevision bMaj bMin) =
-    case compare aMaj bMaj of
-      EQ -> compare aMin bMin
-      x  -> x
-
-instance ToJSON ComplexRevision where
-  toJSON (ComplexRevision major minor) = A.object [ "major" .= major, "minor" .= minor ]
-
-instance PathPiece ComplexRevision where
-  toPathPiece (ComplexRevision major minor) = toPathPiece major <> "-" <> toPathPiece minor
-  fromPathPiece s = case Data.Text.split (== '-') s of
-    [major] -> ComplexRevision <$> fromPathPiece major <*> return 0
-    [major, minor] -> ComplexRevision <$> fromPathPiece major <*> fromPathPiece minor
-    _ -> Nothing
-
-incMajor, incMinor :: ComplexRevision -> ComplexRevision
-incMajor (ComplexRevision major _)     = ComplexRevision (major+1) 0
-incMinor (ComplexRevision major minor) = ComplexRevision major (minor+1)
-
-data OTDoc = OTDoc
-  { otDocContent   :: Text
-  , otDocHistory   :: [UserEvent TextOperation]
-  , otDocRevision  :: ComplexRevision
-  , otDocUsers     :: M.Map Text (Bool, Maybe Cursor)
-  , otDocEvents    :: [UserEvent UserAction]
-  , otDocBroadcast :: Broadcast (Maybe (UserEvent TextOperation), [UserEvent UserAction])
-  }
-
-getOperationsSince :: OTDoc -> Revision -> [UserEvent TextOperation]
-getOperationsSince otDoc major = reverse $ take newOps $ otDocHistory otDoc
-  where newOps = fromIntegral (majorRev (otDocRevision otDoc) - major)
-
-data OTDemo = OTDemo
-  { otState   :: MVar OTDoc
-  , getStatic :: Static
-  }
-
-data OperationWithCursor = OperationWithCursor TextOperation (Maybe Cursor)
-
-instance FromJSON OperationWithCursor where
-  parseJSON (Object o) = OperationWithCursor <$> o .: "operation" <*> o .:? "cursor"
-  parseJSON _ = fail "expected an object"
-
-type UserName = Text
-
-data UserEvent a = UserEvent
-  { userEventUser :: UserName
-  , userEventData :: a
-  }
+import qualified Data.ByteString.Char8 as BSC8
+import Control.Monad (unless)
+import Data.Monoid
 
 {-
-instance (OTOperation op) => OTOperation (UserEvent op) where
-  transform (UserEvent u1 op1) (UserEvent u2 op2) = do
-    (op1', op2') <- transform op1 op2
-    return (UserEvent u1 op1', UserEvent u2 op2')
+  TODO: import file paths from cabal
 -}
 
-class UserEventData a where
-  toEventJSON :: a -> [Pair]
+data ClientState = ClientState
+  { clientName :: !T.Text
+  , clientSelection :: !Sel.Selection
+  } deriving (Show)
 
-instance UserEventData TextOperation where
-  toEventJSON = (:[]) . ("operation" .=)
+instance ToJSON ClientState where
+  toJSON (ClientState name sel) =
+    object $ [ "name" .= name ] ++ (if sel == mempty then [] else [ "selection" .= sel ])
 
-instance UserEventData a => ToJSON (UserEvent a) where
-  toJSON (UserEvent user payload) = A.object $ ("user" .= user) : toEventJSON payload
+data OTDemo = OTDemo
+  { getStatic :: YS.Static
+  , socketIOHandler :: YC.HandlerT OTDemo IO ()
+  , serverState :: STM.TVar (OTS.ServerState T.Text OTT.TextOperation)
+  , clients :: STM.TVar (M.Map T.Text ClientState)
+  }
 
-data UserAction = UserJoined | UserLeft | UserCursorUpdate (Maybe Cursor)
-
-instance UserEventData UserAction where
-  toEventJSON UserJoined = [ "event" .= ("joined" :: Text) ]
-  toEventJSON UserLeft   = [ "event" .= ("left"   :: Text) ]
-  toEventJSON (UserCursorUpdate c) =
-    [ "event"  .= ("cursor"   :: Text)
-    , "cursor" .= maybe Null toJSON c
-    ]
-
---data AnnotatedOperation = AnnotatedOperation UserName TextOperation
-
-mkYesod "OTDemo" [parseRoutes|
-  / RootR GET
-  /static StaticR Static getStatic
-  /login/#Text LoginR GET
-  /ot OTR GET
-  /ot/revision/#ComplexRevision OTRevisionR GET POST
-  /ot/revision/#ComplexRevision/cursor OTCursorR POST
+YC.mkYesod "OTDemo" [YC.parseRoutes|
+/ IndexR GET
+/static StaticR YS.Static getStatic
+/socket.io/ SocketIOR
 |]
 
-instance Yesod OTDemo where
-  isAuthorized _ False = return Authorized -- a read request
-  isAuthorized _ True  = maybe (Unauthorized "login required") (const Authorized) <$> maybeUserName
+instance YC.Yesod OTDemo where
+  -- do not redirect /socket.io/?bla=blub to /socket.io?bla=blub
+  cleanPath _ ["socket.io",""] = Right ["socket.io"]
+  cleanPath _ s =
+    if corrected == s
+        then Right $ map dropDash s
+        else Left corrected
+    where
+      corrected = filter (not . T.null) s
+      dropDash t
+          | T.all (== '-') t = T.drop 1 t
+          | otherwise = t
+
+getIndexR :: Handler ()
+getIndexR = YC.sendFile "text/html" "../../public/index.html"
+
+handleSocketIOR :: Handler ()
+handleSocketIOR = YC.getYesod >>= socketIOHandler
 
 main :: IO ()
 main = do
-  bc <- new
-  otDoc <- newMVar $ mkOtDoc bc
-  s <- staticDevel "../../public"
-  _ <- liftIO $ forkIO $ timeoutThread otDoc
-  warpDebug 3000 $ OTDemo otDoc s
-  where
-    mkOtDoc bc = OTDoc
-      { otDocContent   = initialText
-      , otDocHistory   = []
-      , otDocRevision  = ComplexRevision 0 0
-      , otDocUsers     = M.empty
-      , otDocEvents    = []
-      , otDocBroadcast = bc
-      }
-    initialText = mconcat
-      [ "# This is a Markdown heading\n\n"
-      , "1. un\n"
-      , "2. deux\n"
-      , "3. trois\n\n"
-      , "Lorem *ipsum* dolor **sit** amet.\n\n"
-      , "    $ touch test.txt"
-      ]
+  getStatic <- YS.static "../../public"
+  socketIOHandler <- SIO.initialize yesodAPI server
+  serverState <- STM.newTVarIO (OTS.initialServerState "baba links")
+  clients <- STM.newTVarIO M.empty
+  YC.warp 8000 (OTDemo {..})
 
-timeoutThread :: MVar OTDoc -> IO ()
-timeoutThread mv = forever $ do
-  threadDelay $ 10 * 1000000 -- 10 seconds
-  modifyMVar_ mv $ \otDoc -> do
-    let (active, inactive) = M.partition fst $ otDocUsers otDoc
-    let events = (\u -> UserEvent u UserLeft) <$> M.keys inactive
-        rev = otDocRevision otDoc
-    signal (otDocBroadcast otDoc) (Nothing, events)
-    return $ otDoc
-      { otDocUsers = (,) False . snd <$> active
-      , otDocRevision = ComplexRevision (majorRev rev) (minorRev rev + fromIntegral (length events))
-      , otDocEvents = events ++ otDocEvents otDoc
-      }
+-----------------------
 
-sendJsonError :: Status -> Text -> Handler RepJson
-sendJsonError status msg = do
-  repJson <- jsonToRepJson $ A.object [ "error" .= msg ]
-  sendResponseStatus status repJson
+newtype Revision = Revision { getRevisionNumber :: Integer } deriving (Num, FromJSON, ToJSON)
 
-sendEvent :: OTDoc -> UserEvent UserAction -> IO OTDoc
-sendEvent otDoc event = do
-  signal (otDocBroadcast otDoc) (Nothing, [event])
-  return otDoc'
-  where
-    otDoc' = otDoc
-      { otDocRevision = incMinor (otDocRevision otDoc)
-      , otDocEvents   = event : otDocEvents otDoc
-      }
+data UserLogin = UserLogin T.Text
 
-getRootR :: Handler RepHtml
-getRootR = sendFile typeHtml "../../public/index.html"
+instance FromJSON UserLogin where
+  parseJSON (Object o) = UserLogin <$> o .: "name"
+  parseJSON _ = mzero
 
-getLoginR :: Text -> Handler RepJson
-getLoginR name = do
-  setSession "name" name
-  let event = UserEvent name UserJoined
-  mv <- otState <$> getYesod
-  liftIO $ modifyMVar_ mv $ \otDoc -> do
-    let otDoc' = otDoc { otDocUsers = M.insert name (True, Nothing) (otDocUsers otDoc) }
-    sendEvent otDoc' event
-  jsonToRepJson $ A.object [ "ok" .= ("logged in" :: Text) ]
+server :: StateT SIO.RoutingTable (ReaderT SIO.Socket Handler) ()
+server = do
+  OTDemo {..} <- YC.getYesod
+  sid <- T.pack . BSC8.unpack . SIO.socketId <$> ask
 
-maybeUserName :: GHandler s OTDemo (Maybe UserName)
-maybeUserName = lookupSession "name"
+  mayEditTV <- liftIO $ STM.newTVarIO False
+  let mayEdit = liftIO $ STM.readTVarIO mayEditTV
 
-requireUserName :: GHandler s OTDemo UserName
-requireUserName = maybeUserName >>= maybe (fail "Login required") return
+  SIO.on "login" $ \(UserLogin name) -> do
+    let client = ClientState name mempty
+    liftIO $ STM.atomically $ do
+      STM.writeTVar mayEditTV True
+      STM.modifyTVar clients (M.insert sid client)
+    SIO.broadcastJSON "set_name" [toJSON sid, toJSON name]
+    SIO.emitJSON "logged_in" []
 
-getOTR :: Handler RepJson
-getOTR = do
-  otDoc <- getYesod >>= liftIO . readMVar . otState
-  let OTDoc { otDocContent = str, otDocRevision = rev, otDocUsers = users } = otDoc
-  jsonToRepJson $ A.object
-    [ "revision" .= rev
-    , "document" .= str
-    , "users"    .= (maybe Null toJSON . snd <$> users)
+  SIO.on "operation" $ \rev op (sel :: Sel.Selection) -> do
+    me <- mayEdit
+    unless me $ fail "user is not allowed to make any changes"
+    res <- liftIO $ STM.atomically $ do
+     ss <- STM.readTVar serverState
+     case OTS.applyOperation ss rev op sel of
+       Left err -> return (Left err)
+       Right (op', sel', ss') -> do
+         STM.writeTVar serverState ss'
+         return $ Right (op', sel')
+    case res of
+      Left err -> liftIO $ putStrLn err
+      Right (op', sel') -> do
+        liftIO $ putStrLn $ "new operation: " ++ show op'
+        SIO.emitJSON "ack" []
+        SIO.broadcastJSON "operation" [toJSON sid, toJSON op', toJSON sel']
+
+  SIO.on "selection" $ \sel -> do
+    me <- mayEdit
+    unless me $ fail "user is not allowed to select anything"
+    liftIO $ STM.atomically $
+      STM.modifyTVar clients (M.adjust (\u -> u { clientSelection = sel }) sid)
+    SIO.broadcastJSON "selection" [toJSON sid, toJSON sel]
+
+  -- TODO: handle disconnects
+
+  -- send initial message
+  currClients <- liftIO $ STM.readTVarIO clients
+  OTS.ServerState rev doc _ <- liftIO $ STM.readTVarIO serverState
+  SIO.emit "doc" $ object
+    [ "str" .= doc
+    , "revision" .= rev
+    , "clients" .= currClients
     ]
-
-getOTRevisionR :: ComplexRevision -> Handler RepJson
-getOTRevisionR r = do
-  mv <- otState <$> getYesod
-  otDoc <- liftIO $ takeMVar mv
-  mUserName <- maybeUserName
-  otDoc' <- case mUserName of
-    Nothing -> return otDoc
-    Just userName | userName `M.member` otDocUsers otDoc -> return $ otDoc
-      { otDocUsers = M.adjust ((,) True . snd) userName (otDocUsers otDoc)
-      }
-    Just userName -> do
-      let event = UserEvent userName UserJoined
-          otDoc' = otDoc { otDocUsers = M.insert userName (True, Nothing) (otDocUsers otDoc) }
-      liftIO $ sendEvent otDoc' event
-  liftIO $ putMVar mv otDoc'
-  let OTDoc { otDocRevision = rev, otDocBroadcast = bc
-            , otDocUsers = users, otDocEvents = events } = otDoc'
-  if majorRev r < majorRev rev
-    then do
-      jsonToRepJson $ A.object
-        [ "operations" .= getOperationsSince otDoc' (majorRev r)
-        , "users"      .= (maybe Null toJSON . snd <$> users)
-        , "revision"   .= rev
-        ]
-    else if minorRev r < minorRev rev
-      then do
-        let newEvents = reverse (take (fromIntegral (minorRev rev - minorRev r)) events)
-        jsonToRepJson $ A.object [ "operations" .= emptyArray, "events" .= newEvents ]
-      else do
-        (newOp, newEvents) <- liftIO $ listen bc
-        jsonToRepJson $ A.object
-              [ "operations" .= maybeToList newOp
-              , "events" .= newEvents
-              ]
-        {-
-        userName <- requireUserName
-        fix $ \loop -> do
-          news <- liftIO $ listen bc
-          case news of
-            (Nothing, [UserEvent user _]) | user == userName -> loop
-            (newOp, newEvents) -> jsonToRepJson $ A.object
-              [ "operations" .= maybeToList newOp
-              , "events" .= newEvents
-              ]
-        -}
-
-transformIncomingOperation :: ComplexRevision
-                           -> UserEvent TextOperation
-                           -> Maybe Cursor
-                           -> OTDoc
-                           -> Either String (UserEvent TextOperation, Maybe Cursor, OTDoc)
-transformIncomingOperation oprev (UserEvent user op) cursor otDoc = do
-  concurrentOps <- if oprev > rev || majorRev rev - majorRev oprev > fromIntegral (length ops)
-    then Left "unknown revision number"
-    else Right $ take (fromInteger $ majorRev rev - majorRev oprev) ops
-  (op', cursor') <- foldM transformFst (op, cursor) (userEventData <$> reverse concurrentOps)
-  contents' <- case apply op' contents of
-    Left err -> Left $ "apply failed: " ++ err
-    Right d -> Right d
-  let otDoc' = otDoc
-        { otDocContent  = contents'
-        , otDocRevision = incMajor rev
-        , otDocHistory  = (UserEvent user op'):ops
-        , otDocUsers    = (,) True . fmap (flip updateCursor op') . snd <$> otDocUsers otDoc
-        }
-  return (UserEvent user op', cursor', otDoc')
-  where
-    OTDoc { otDocContent = contents, otDocRevision = rev, otDocHistory = ops } = otDoc
-    transformFst (a, cursor_) b = case transform a b of
-      Left err -> Left $ "transform failed: " ++ err
-      Right (a', b') -> Right (a', flip updateCursor b' <$> cursor_)
-
-postOTRevisionR :: ComplexRevision -> Handler RepJson
-postOTRevisionR rev = do
-  OperationWithCursor operation cursor <- parseJsonBody_
-  otMVar <- otState <$> getYesod
-  otDoc <- liftIO $ takeMVar otMVar
-  user <- requireUserName
-  case transformIncomingOperation rev (UserEvent user operation) cursor otDoc of
-    Left err -> do
-      liftIO $ putMVar otMVar otDoc
-      sendJsonError badRequest400 (pack err)
-    Right (operation', cursor', otDoc') -> do
-      let cursorUpdate = UserEvent user (UserCursorUpdate cursor')
-          otDoc'' = otDoc'
-            { otDocEvents = [cursorUpdate]
-            , otDocRevision = incMinor (otDocRevision otDoc')
-            }
-      liftIO $ do
-        signal (otDocBroadcast otDoc) (Just operation', [cursorUpdate])
-        putMVar otMVar otDoc''
-      jsonToRepJson $ A.object [ "ok" .= ("document updated" :: Text) ]
-
-postOTCursorR :: ComplexRevision -> Handler RepJson
-postOTCursorR (ComplexRevision major _) = do
-  cursorR <- parseJsonBody
-  let cursor = case cursorR of
-        Error _   -> Nothing
-        Success c -> Just c
-  mv <- otState <$> getYesod
-  user <- requireUserName
-  liftIO $ modifyMVar_ mv $ \otDoc -> do
-    let newOperations = getOperationsSince otDoc major
-        cursor' = flip (foldl updateCursor) (userEventData <$> newOperations) <$> cursor
-        otDoc'  = otDoc { otDocUsers = M.insert user (True, cursor') (otDocUsers otDoc) }
-    sendEvent otDoc' $ UserEvent user $ UserCursorUpdate cursor'
-  jsonToRepJson $ A.object [ "ok" .= ("cursor updated" :: Text) ]
