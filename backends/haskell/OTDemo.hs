@@ -19,7 +19,7 @@ import qualified Control.OperationalTransformation.Text as OTT
 import qualified Control.OperationalTransformation.Selection as Sel
 import Network.EngineIO.Yesod (yesodAPI)
 import Control.Monad.State.Strict (StateT)
-import Control.Monad.Trans.Reader (ReaderT)
+import Control.Monad.Trans.Reader (ReaderT (..))
 import Control.Monad.Reader (MonadReader (..))
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad (mzero)
@@ -97,7 +97,8 @@ instance FromJSON UserLogin where
 server :: StateT SIO.RoutingTable (ReaderT SIO.Socket Handler) ()
 server = do
   OTDemo {..} <- YC.getYesod
-  sid <- T.pack . BSC8.unpack . SIO.socketId <$> ask
+  s <- ask
+  let sid = T.pack . BSC8.unpack $ SIO.socketId s
 
   mayEditTV <- liftIO $ STM.newTVarIO False
   let mayEdit = liftIO $ STM.readTVarIO mayEditTV
@@ -134,7 +135,9 @@ server = do
       STM.modifyTVar clients (M.adjust (\u -> u { clientSelection = sel }) sid)
     SIO.broadcastJSON "selection" [toJSON sid, toJSON sel]
 
-  -- TODO: handle disconnects
+  SIO.appendDisconnectHandler $ const $ do
+    STM.atomically $ STM.modifyTVar clients (M.delete sid)
+    runReaderT (SIO.broadcast "client_left" sid) s
 
   -- send initial message
   currClients <- liftIO $ STM.readTVarIO clients
