@@ -135,9 +135,9 @@ server = do
       STM.modifyTVar clients (M.adjust (\u -> u { clientSelection = sel }) sid)
     SIO.broadcastJSON "selection" [toJSON sid, toJSON sel]
 
-  SIO.appendDisconnectHandler $ const $ do
-    STM.atomically $ STM.modifyTVar clients (M.delete sid)
-    runReaderT (SIO.broadcast "client_left" sid) s
+  SIO.appendDisconnectHandler $ do
+    liftIO $ STM.atomically $ STM.modifyTVar clients (M.delete sid)
+    SIO.broadcast "client_left" sid
 
   -- send initial message
   currClients <- liftIO $ STM.readTVarIO clients
