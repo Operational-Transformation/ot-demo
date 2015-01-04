@@ -30,5 +30,6 @@ executable ot-demo
                        mtl,
                        transformers,
                        stm,
-                       bytestring
+                       bytestring,
+                       monad-logger
   ghc-options:         -threaded -O2 -Wall

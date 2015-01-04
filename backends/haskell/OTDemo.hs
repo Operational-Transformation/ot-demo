@@ -30,6 +30,7 @@ import qualified Data.Map as M
 import qualified Data.ByteString.Char8 as BSC8
 import Control.Monad (unless)
 import Data.Monoid
+import qualified Control.Monad.Logger as ML
 
 {-
   TODO: import file paths from cabal
@@ -99,6 +100,8 @@ server = do
   OTDemo {..} <- YC.getYesod
   s <- ask
   let sid = T.pack . BSC8.unpack $ SIO.socketId s
+  runLogging <- flip ML.runLoggingT <$> ML.askLoggerIO
+  $(YC.logDebug) $ "New client joined: " <> sid
 
   mayEditTV <- liftIO $ STM.newTVarIO False
   let mayEdit = liftIO $ STM.readTVarIO mayEditTV
@@ -108,12 +111,14 @@ server = do
     liftIO $ STM.atomically $ do
       STM.writeTVar mayEditTV True
       STM.modifyTVar clients (M.insert sid client)
+    runLogging $ $(YC.logDebug) $ "Client logged in: " <> sid <> " is now '" <> name <> "'"
     SIO.broadcastJSON "set_name" [toJSON sid, toJSON name]
     SIO.emitJSON "logged_in" []
 
   SIO.on "operation" $ \rev op (sel :: Sel.Selection) -> do
     me <- mayEdit
     unless me $ fail "user is not allowed to make any changes"
+    runLogging $ $(YC.logDebug) $ "New operation from client " <> sid
     res <- liftIO $ STM.atomically $ do
      ss <- STM.readTVar serverState
      case OTS.applyOperation ss rev op sel of
@@ -136,6 +141,7 @@ server = do
     SIO.broadcastJSON "selection" [toJSON sid, toJSON sel]
 
   SIO.appendDisconnectHandler $ do
+    runLogging $ $(YC.logDebug) $ "Client disconnected: " <> sid
     liftIO $ STM.atomically $ STM.modifyTVar clients (M.delete sid)
     SIO.broadcast "client_left" sid
 
