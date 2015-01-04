@@ -21,12 +21,6 @@ if (process.env.NODE_ENV === 'development') {
 
 var io = socketIO.listen(appServer);
 
-// source: http://devcenter.heroku.com/articles/using-socket-io-with-node-js-on-heroku
-if (process.env.NODE_ENV === 'production') {
-  io.set('transports', ['xhr-polling']);
-  io.set('polling duration', 10);
-}
-
 var str = "# This is a Markdown heading\n\n"
         + "1. un\n"
         + "2. deux\n"
