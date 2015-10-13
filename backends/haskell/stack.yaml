@@ -1,0 +1,7 @@
+flags: {}
+packages:
+- '.'
+extra-deps:
+- engine-io-yesod-1.0.2
+- ot-0.2.1.0
+resolver: lts-3.9
